@@ -1,8 +1,6 @@
 Write-Host  -ForegroundColor Yellow "Starting Brooks' Custom OSDCloud ..."
 cls
 Write-Host "===================== Main Menu =======================" -ForegroundColor Yellow
-Write-Host "================ www.brookspeppin.com =================" -ForegroundColor Yellow
-Write-Host "====================@brookspeppin =====================" -ForegroundColor Yellow
 Write-Host "=======================================================" -ForegroundColor Yellow
 Write-Host "1: Zero-Touch Win11 22H2 | English | Enterprise"-ForegroundColor Yellow
 Write-Host "2: Zero-Touch Win11 23H2 | English | Enterprise" -ForegroundColor Yellow
