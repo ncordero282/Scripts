@@ -17,8 +17,8 @@ Install-Module OSD -Force
 
 switch ($input)
 {
-    '1' { Start-OSDCloud -OSLanguage en-us -OSBuild 22H2 -OSEdition Enterprise -ZTI } 
-    '2' { Start-OSDCloud -OSLanguage en-us -OSBuild 23H2 -OSEdition Enterprise -ZTI } 
+    '1' { Start-OSDCloud -OSLanguage en-us -OSBuild 20H1 -OSEdition Enterprise -ZTI } 
+    '2' { Start-OSDCloud -OSLanguage en-us -OSBuild 21H1 -OSEdition Enterprise -ZTI } 
     '3' { Start-OSDCloud	} 
     '4' { Exit		}
 }
