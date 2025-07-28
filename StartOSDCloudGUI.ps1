@@ -1,21 +1,11 @@
-Write-Host -ForegroundColor Yellow "Starting Custom OSDCloud Deployment ..."
+Write-Host -ForegroundColor Yellow "Starting Zero-Touch OSDCloud Deployment ..."
 cls
-Write-Host "==================== NYC IT Deployment ====================" -ForegroundColor Yellow
-Write-Host "============= Powered by OSDCloud + Brooks =================" -ForegroundColor Yellow
-Write-Host "============================================================" -ForegroundColor Yellow
-Write-Host "1: Zero-Touch Win11 24H2 | English | Enterprise" -ForegroundColor Yellow
-Write-Host "2: Manual OS Selection (GUI)" -ForegroundColor Yellow
-Write-Host "3: Exit`n" -ForegroundColor Yellow
 
-$input = Read-Host "Please make a selection"
-
-# ========== Setup ==========
-
+# ========== Load OSDCloud ==========
 Import-Module OSD -Force
 Install-Module OSD -Force
 
 # ========== Detect Dell Model + Download Drivers ==========
-
 $Model = (Get-CimInstance -ClassName Win32_ComputerSystem).Model
 Write-Host "`nDetected Dell Model: $Model" -ForegroundColor Cyan
 
@@ -26,7 +16,6 @@ try {
 }
 
 # ========== Run AutoPilot Script (Webhook) ==========
-
 Start-Transcript -Path "X:\Generated Hash Keys\AutoPilotLog.txt"
 Set-ExecutionPolicy Bypass -Scope Process -Force
 
@@ -88,31 +77,20 @@ Read-Host "`nPress ENTER after logging in with the device code above..."
 SendTo-Autopilot
 Stop-Transcript
 
-# ========== Handle Menu Selections ==========
+# ========== Deploy Win11 24H2 Enterprise in Zero-Touch Mode ==========
+Start-OSDCloud -OSLanguage en-us -OSBuild 24H2 -OSEdition Enterprise -ZTI
 
-switch ($input) {
-    '1' {
-        # Deploy Win11 24H2 Enterprise in Zero-Touch mode
-        Start-OSDCloud -OSLanguage en-us -OSBuild 24H2 -OSEdition Enterprise -ZTI
-
-        # ========== Post-Install: Run Windows Updates ==========
-        Write-Host "`nInstalling Windows updates..." -ForegroundColor Cyan
-        try {
-            Install-PackageProvider -Name NuGet -Force
-            Install-Module -Name PSWindowsUpdate -Force -AllowClobber
-            Import-Module PSWindowsUpdate
-            Get-WindowsUpdate -Install -AcceptAll -IgnoreReboot -Verbose
-            Restart-Computer -Force
-        } catch {
-            Write-Warning "Windows Update process failed: $_"
-        }
-    }
-    '2' {
-        Start-OSDCloudGUI
-    }
-    '3' {
-        Exit
-    }
+# ========== Run Windows Updates Post-Install ==========
+try {
+    Write-Host "`nInstalling Windows updates..." -ForegroundColor Cyan
+    Install-PackageProvider -Name NuGet -Force
+    Install-Module -Name PSWindowsUpdate -Force -AllowClobber
+    Import-Module PSWindowsUpdate
+    Get-WindowsUpdate -Install -AcceptAll -IgnoreReboot -Verbose
+    Restart-Computer -Force
+} catch {
+    Write-Warning "Windows Updates failed: $_"
 }
 
+# ========== End ==========
 wpeutil reboot
