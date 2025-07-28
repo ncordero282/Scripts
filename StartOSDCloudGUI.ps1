@@ -51,8 +51,8 @@ if ($workspace) {
     New-OSDCloud.Workspace -WorkspacePath $workspace
 }
 
-# Step 4: Prepare startup GUI script
-$GUIStartupScript = "https://yourdomain.com/scripts/StartGUI.ps1"  # Replace with your actual hosted .ps1 URL
+# Step 4: Define GUI startup script (hosted raw)
+$GUIStartupScript = "https://raw.githubusercontent.com/ncordero282/Scripts/refs/heads/main/StartOSDCloudGUI.ps1?token=GHSAT0AAAAAADIEHMUQ4HLJVEREIKVGHLE42EHNK4Q"
 
 # Step 5: Inject WinPE Drivers + Required Modules + GUI Startup Script
 if ($WinPEDrivers) {
@@ -63,7 +63,7 @@ if ($WinPEDrivers) {
     Edit-OSDCloud.WinPE -AddModule OSD,OSDCloudGUI,Microsoft.PowerShell.Archive -WebPSScript $GUIStartupScript
 }
 
-# Optional: Override GUI script if user specifies
+# Optional: Override GUI script if user specifies one
 if ($CustomURL) {
     Write-Host "Overriding default GUI script with: $CustomURL"
     Edit-OSDCloud.WinPE -WebPSScript $CustomURL
