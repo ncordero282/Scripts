@@ -67,10 +67,10 @@ if ($workspace) {
     New-OSDCloudWorkspace -WorkspacePath $workspace
 }
 
-# Step 4: Define GUI startup script (hosted raw)
-$GUIStartupScript = "https://raw.githubusercontent.com/ncordero282/Scripts/refs/heads/main/StartOSDCloudGUI.ps1?token=GHSAT0AAAAAADIEHMUQ4HLJVEREIKVGHLE42EHNK4Q"
+# Step 4: Define GUI startup script (corrected raw GitHub URL)
+$GUIStartupScript = "https://raw.githubusercontent.com/ncordero282/Scripts/main/StartOSDCloudGUI.ps1"
 
-# Step 5: Inject WinPE Drivers + GUI Startup Script (no -AddModule)
+# Step 5: Inject WinPE Drivers + GUI Startup Script
 if ($WinPEDrivers) {
     Write-Host "Injecting WinPE drivers ($WinPEDrivers) and GUI startup script..."
     Edit-OSDCloudWinPE -CloudDriver $WinPEDrivers -WebPSScript $GUIStartupScript
