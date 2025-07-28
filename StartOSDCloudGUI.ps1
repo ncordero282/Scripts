@@ -1,4 +1,4 @@
-# OSDCloud Creator Tool with Auto GUI Integration
+# OSDCloud Creator Tool with Auto GUI Launch and Module Validation
 # Author: Brooks Peppin + Extended by ChatGPT
 # https://www.osdcloud.com/
 
@@ -15,11 +15,31 @@ param (
 )
 
 function Install-LatestModules {
-    Write-Host "Installing latest OSD module from PSGallery..."
-    Install-Module -Name OSD -Force -AllowClobber
+    Write-Host "Installing latest OSD and OSDCloudGUI modules..."
 
-    Write-Host "Installing OSDCloudGUI module..."
-    Install-Module -Name OSDCloudGUI -Force -AllowClobber
+    try {
+        Install-Module -Name OSD -Force -AllowClobber -ErrorAction Stop
+        Install-Module -Name OSDCloudGUI -Force -AllowClobber -ErrorAction Stop
+    } catch {
+        Write-Error "❌ Failed to install one or both modules from PSGallery. Check your internet connection or NuGet settings."
+        exit 1
+    }
+
+    try {
+        Import-Module OSD -Force -ErrorAction Stop
+        Import-Module OSDCloudGUI -Force -ErrorAction Stop
+    } catch {
+        Write-Error "❌ Modules were installed, but failed to import into this session. Try running PowerShell as Administrator."
+        exit 1
+    }
+
+    # Confirm cmdlets are available
+    if (-not (Get-Command New-OSDCloud.Workspace -ErrorAction SilentlyContinue)) {
+        Write-Error "❌ 'OSD' module is installed but its cmdlets are not available in this session. Check for conflicting environments or OneDrive restrictions."
+        exit 1
+    }
+
+    Write-Host "✅ Modules installed and imported successfully.`n"
 }
 
 # Step 1: Install ADK + WinPE Add-on
@@ -38,7 +58,7 @@ if ($ADK) {
     Start-Process -FilePath "$downloads\adkwinpesetup.exe" -ArgumentList "/quiet /features OptionId.WindowsPreinstallationEnvironment" -Wait
 }
 
-# Step 2: Install modules and create OSDCloud template
+# Step 2: Install and import modules, and create OSDCloud template
 if ($New) {
     Install-LatestModules
     Write-Host "Creating new OSDCloud template..."
