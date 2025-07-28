@@ -1,7 +1,4 @@
-# OSDCloud Creator Tool with Auto GUI Launch and Module Validation
-# Author: Brooks Peppin + Extended by ChatGPT
-# https://www.osdcloud.com/
-
+# OSDCloud Creator Tool with Auto GUI Launch and Module Validation (Fixed Cmdlets)
 [CmdletBinding()]
 param (
     [switch]$ADK,
@@ -33,8 +30,7 @@ function Install-LatestModules {
         exit 1
     }
 
-    # Confirm cmdlets are available
-    if (-not (Get-Command New-OSDCloud.Workspace -ErrorAction SilentlyContinue)) {
+    if (-not (Get-Command New-OSDCloudWorkspace -ErrorAction SilentlyContinue)) {
         Write-Error "❌ 'OSD' module is installed but its cmdlets are not available in this session. Check for conflicting environments or OneDrive restrictions."
         exit 1
     }
@@ -62,13 +58,13 @@ if ($ADK) {
 if ($New) {
     Install-LatestModules
     Write-Host "Creating new OSDCloud template..."
-    New-OSDCloud.Template -Verbose
+    New-OSDCloudTemplate -Verbose
 }
 
 # Step 3: Create OSDCloud Workspace
 if ($workspace) {
     Write-Host "Creating OSDCloud workspace at: $workspace"
-    New-OSDCloud.Workspace -WorkspacePath $workspace
+    New-OSDCloudWorkspace -WorkspacePath $workspace
 }
 
 # Step 4: Define GUI startup script (hosted raw)
@@ -77,28 +73,28 @@ $GUIStartupScript = "https://raw.githubusercontent.com/ncordero282/Scripts/refs/
 # Step 5: Inject WinPE Drivers + Required Modules + GUI Startup Script
 if ($WinPEDrivers) {
     Write-Host "Injecting WinPE drivers ($WinPEDrivers) and required modules..."
-    Edit-OSDCloud.WinPE -CloudDriver $WinPEDrivers -AddModule OSD,OSDCloudGUI,Microsoft.PowerShell.Archive -WebPSScript $GUIStartupScript
+    Edit-OSDCloudWinPE -CloudDriver $WinPEDrivers -AddModule OSD,OSDCloudGUI,Microsoft.PowerShell.Archive -WebPSScript $GUIStartupScript
 } else {
     Write-Host "Injecting required modules and GUI script (no drivers)..."
-    Edit-OSDCloud.WinPE -AddModule OSD,OSDCloudGUI,Microsoft.PowerShell.Archive -WebPSScript $GUIStartupScript
+    Edit-OSDCloudWinPE -AddModule OSD,OSDCloudGUI,Microsoft.PowerShell.Archive -WebPSScript $GUIStartupScript
 }
 
 # Optional: Override GUI script if user specifies one
 if ($CustomURL) {
     Write-Host "Overriding default GUI script with: $CustomURL"
-    Edit-OSDCloud.WinPE -WebPSScript $CustomURL
+    Edit-OSDCloudWinPE -WebPSScript $CustomURL
 }
 
 # Step 6: Build ISO
 if ($BuildISO) {
     Write-Host "Building OSDCloud ISO..."
-    New-OSDCloud.ISO
+    New-OSDCloudISO
 }
 
 # Step 7: Build USB
 if ($BuildUSB) {
     Write-Host "Building OSDCloud USB..."
-    New-OSDCloud.USB
+    New-OSDCloudUSB
 }
 
 # Step 8: Launch GUI in current session (optional)
