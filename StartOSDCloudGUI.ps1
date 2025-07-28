@@ -1,4 +1,4 @@
-# OSDCloud Creator Tool with Auto GUI Launch and Module Validation (Fixed Cmdlets)
+# OSDCloud Creator Tool with GUI Auto-Launch and Cleaned Parameters
 [CmdletBinding()]
 param (
     [switch]$ADK,
@@ -70,16 +70,16 @@ if ($workspace) {
 # Step 4: Define GUI startup script (hosted raw)
 $GUIStartupScript = "https://raw.githubusercontent.com/ncordero282/Scripts/refs/heads/main/StartOSDCloudGUI.ps1?token=GHSAT0AAAAAADIEHMUQ4HLJVEREIKVGHLE42EHNK4Q"
 
-# Step 5: Inject WinPE Drivers + Required Modules + GUI Startup Script
+# Step 5: Inject WinPE Drivers + GUI Startup Script (no -AddModule)
 if ($WinPEDrivers) {
-    Write-Host "Injecting WinPE drivers ($WinPEDrivers) and required modules..."
-    Edit-OSDCloudWinPE -CloudDriver $WinPEDrivers -AddModule OSD,OSDCloudGUI,Microsoft.PowerShell.Archive -WebPSScript $GUIStartupScript
+    Write-Host "Injecting WinPE drivers ($WinPEDrivers) and GUI startup script..."
+    Edit-OSDCloudWinPE -CloudDriver $WinPEDrivers -WebPSScript $GUIStartupScript
 } else {
-    Write-Host "Injecting required modules and GUI script (no drivers)..."
-    Edit-OSDCloudWinPE -AddModule OSD,OSDCloudGUI,Microsoft.PowerShell.Archive -WebPSScript $GUIStartupScript
+    Write-Host "Injecting GUI startup script only (no drivers)..."
+    Edit-OSDCloudWinPE -WebPSScript $GUIStartupScript
 }
 
-# Optional: Override GUI script if user specifies one
+# Optional: Override GUI script if user provides one
 if ($CustomURL) {
     Write-Host "Overriding default GUI script with: $CustomURL"
     Edit-OSDCloudWinPE -WebPSScript $CustomURL
