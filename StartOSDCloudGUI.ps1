@@ -1,6 +1,6 @@
-# Master PowerShell Script to Launch OSDCloud GUI with Customization and AutoPilot Notice
+# Master PowerShell Script to Launch OSDCloud GUI with Optional AutoPilot (Manual Reboot with Reminder)
 
-Start-Transcript -Path X:\Windows\Temp\OSDCloudGUI.log -Force
+Start-Transcript -Path X:\Windows\Temp\OSDCloud.log -Force
 
 # Get system model
 $Model = (Get-CimInstance -ClassName Win32_ComputerSystem).Model
@@ -13,62 +13,68 @@ switch -Wildcard ($Model) {
     default { $DriverPack = "Generic or Unsupported Model" }
 }
 
-# Autopilot status message
-$AutoPilotEnabled = $true
-$AutoPilotStatus = if ($AutoPilotEnabled) {
-    "AutoPilot is ENABLED and will run after deployment."
-} else {
-    "AutoPilot is NOT enabled."
-}
+Write-Host "Model Detected: $Model"
+Write-Host "Driver Pack: $DriverPack"
 
-# Load WinForms for simple GUI
+# Load WinForms for dialogs
 Add-Type -AssemblyName System.Windows.Forms
 
-$form = New-Object System.Windows.Forms.Form
-$form.Text = "OSDCloud GUI"
-$form.Width = 550
-$form.Height = 300
-$form.StartPosition = "CenterScreen"
+# Ask admin about AutoPilot
+$dialogResult = [System.Windows.Forms.MessageBox]::Show(
+    "Would you like to ENABLE AutoPilot after deployment?",
+    "OSDCloud - AutoPilot Option",
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Question
+)
 
-$labelTitle = New-Object System.Windows.Forms.Label
-$labelTitle.Text = "Welcome to OSDCloud Deployment"
-$labelTitle.Font = New-Object System.Drawing.Font("Segoe UI",14,[System.Drawing.FontStyle]::Bold)
-$labelTitle.AutoSize = $true
-$labelTitle.Location = New-Object System.Drawing.Point(20,20)
-$form.Controls.Add($labelTitle)
+if ($dialogResult -eq [System.Windows.Forms.DialogResult]::Yes) {
+    $AutoPilotEnabled = $true
+    Write-Host "AutoPilot ENABLED. It will run after deployment." -ForegroundColor Green
+} else {
+    $AutoPilotEnabled = $false
+    Write-Host "AutoPilot DISABLED. It will NOT run after deployment." -ForegroundColor Yellow
+}
 
-$labelModel = New-Object System.Windows.Forms.Label
-$labelModel.Text = "Model Detected: $Model"
-$labelModel.Location = New-Object System.Drawing.Point(20,70)
-$labelModel.AutoSize = $true
-$form.Controls.Add($labelModel)
+# Launch the default OSDCloud GUI
+Start-OSDCloudGUI
 
-$labelDriver = New-Object System.Windows.Forms.Label
-$labelDriver.Text = "Driver Pack: $DriverPack"
-$labelDriver.Location = New-Object System.Drawing.Point(20,100)
-$labelDriver.AutoSize = $true
-$form.Controls.Add($labelDriver)
+# Wait until OSDCloud GUI finishes
+Write-Host "OSDCloud deployment completed." -ForegroundColor Cyan
 
-$labelAutoPilot = New-Object System.Windows.Forms.Label
-$labelAutoPilot.Text = $AutoPilotStatus
-$labelAutoPilot.ForeColor = 'Green'
-$labelAutoPilot.Location = New-Object System.Drawing.Point(20,130)
-$labelAutoPilot.AutoSize = $true
-$form.Controls.Add($labelAutoPilot)
+# Run AutoPilot immediately if enabled
+if ($AutoPilotEnabled) {
+    Write-Host "Running AutoPilot enrollment script..." -ForegroundColor Cyan
+    
+    try {
+        # Download & run AutoPilot script directly from your GitHub repo
+        $AutoPilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/AutoPilotScript.ps1"
+        $LocalScript = "X:\Windows\Temp\AutoPilotScript.ps1"
 
-$buttonStart = New-Object System.Windows.Forms.Button
-$buttonStart.Text = "Start OSDCloud GUI"
-$buttonStart.Width = 200
-$buttonStart.Height = 30
-$buttonStart.Location = New-Object System.Drawing.Point(20,180)
-$buttonStart.Add_Click({
-    $form.Close()
-    Start-OSDCloudGUI
-})
-$form.Controls.Add($buttonStart)
+        Invoke-WebRequest -Uri $AutoPilotScriptUrl -OutFile $LocalScript -UseBasicParsing
+        Write-Host "AutoPilot script downloaded successfully." -ForegroundColor Green
 
-$form.Topmost = $true
-$form.Add_Shown({ $form.Activate() })
-[void]$form.ShowDialog()
+        # Execute AutoPilot script immediately after OSDCloud finishes
+        & powershell.exe -ExecutionPolicy Bypass -File $LocalScript
+
+        Write-Host "AutoPilot script execution completed." -ForegroundColor Green
+
+        # Popup reminder for reboot
+        [System.Windows.Forms.MessageBox]::Show(
+            "AutoPilot enrollment has finished. Please manually REBOOT the system to complete enrollment.",
+            "OSDCloud - Reboot Required",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        )
+    }
+    catch {
+        Write-Host "Error running AutoPilot script: $_" -ForegroundColor Red
+        [System.Windows.Forms.MessageBox]::Show(
+            "An error occurred while running AutoPilot. Check OSDCloud.log for details.",
+            "AutoPilot Error",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+    }
+}
 
 Stop-Transcript
