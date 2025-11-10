@@ -7,8 +7,8 @@ Write-Host "===================== Main Menu =======================" -Foreground
 Write-Host "================ Nelson Cordero =================" -ForegroundColor Yellow
 Write-Host "====================NYC Parks=====================" -ForegroundColor Yellow
 Write-Host "=======================================================" -ForegroundColor Yellow
-Write-Host "1: Zero-Touch Win10 22H2 | English | Enterprise" -ForegroundColor Yellow
-Write-Host "2: Zero-Touch Win10 23H2 | English | Enterprise" -ForegroundColor Yellow
+Write-Host "1: Zero-Touch Win10 24H2 | English | Enterprise" -ForegroundColor Yellow
+Write-Host "2: Zero-Touch Win10 25H2 | English | Enterprise" -ForegroundColor Yellow
 Write-Host "3: I'll select it myself" -ForegroundColor Yellow
 Write-Host "4: Exit`n" -ForegroundColor Yellow
 
@@ -19,12 +19,12 @@ $input = Read-Host "Please make a selection"
 switch ($input) {
     '1' {
         Write-Host "Loading OSDCloud..." -ForegroundColor Yellow
-        Start-OSDCloud -OSLanguage en-us -OSBuild 22H2 -OSEdition Enterprise -ZTI
+        Start-OSDCloud -OSLanguage en-us -OSBuild 24H2 -OSEdition Enterprise -ZTI
         break
     }
     '2' {
         Write-Host "Loading OSDCloud..." -ForegroundColor Yellow
-        Start-OSDCloud -OSLanguage en-us -OSBuild 23H2 -OSEdition Enterprise -ZTI
+        Start-OSDCloud -OSLanguage en-us -OSBuild 25H2 -OSEdition Enterprise -ZTI
         break
     }
     '3' {
