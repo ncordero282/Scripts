@@ -1,6 +1,6 @@
-# Minimal OSDCloud GUI launcher that forces all work to C:\OSDCloud
+# OSDCloud GUI launcher with automatic Windows Update via SetupComplete
 
-Start-Transcript -Path X:\Windows\Temp\OSDCloud.log -Force
+Start-Transcript -Path X:\Windows\Temp\OSDCloudGUI.log -Force
 
 # Load OSD module
 try {
@@ -11,16 +11,29 @@ try {
     return
 }
 
-# Force OSDCloud to use C:\OSDCloud (NOT the USB) for all downloads / offline OS
-$env:OSDCloudPath = 'C:\OSDCloud'
-Write-Host "OSDCloud working path: $env:OSDCloudPath" -ForegroundColor Cyan
+Write-Host "OSD module imported successfully." -ForegroundColor Green
 
-if (-not (Test-Path $env:OSDCloudPath)) {
-    New-Item -ItemType Directory -Path $env:OSDCloudPath -Force | Out-Null
+# ----------------------------------------------------------
+# Enable OSDCloud SetupComplete Windows Update for this run
+# ----------------------------------------------------------
+if (-not $Global:OSDCloud) {
+    $Global:OSDCloud = [ordered]@{}
 }
 
+# This tells OSDCloud to create SetupComplete scripts in the new OS
+# that will run Start-WindowsUpdate on first boot (before OOBE).
+$Global:OSDCloud.WindowsUpdate = $true
+
+# Optional: also let Windows try to pull driver updates
+# $Global:OSDCloud.WindowsUpdateDrivers = $true
+
+Write-Host "OSDCloud WindowsUpdate flag set to: $($Global:OSDCloud.WindowsUpdate)" -ForegroundColor Cyan
+
+# ----------------------------------------------------------
 # Launch the built-in OSDCloud GUI
+# ----------------------------------------------------------
 Write-Host "Launching OSDCloud GUI..." -ForegroundColor Cyan
+
 try {
     Start-OSDCloudGUI
 } catch {
@@ -30,6 +43,6 @@ try {
 }
 
 Write-Host "OSDCloud GUI has exited." -ForegroundColor Cyan
-Write-Host "If deployment finished, run 'wpeutil reboot' and boot from the internal drive." -ForegroundColor Yellow
+Write-Host "If deployment finished, reboot with 'wpeutil reboot' and boot from the internal drive." -ForegroundColor Yellow
 
 Stop-Transcript
