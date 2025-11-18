@@ -1,7 +1,8 @@
 # Master OSDCloud WinPE script:
 # - Enables Windows Update via SetupComplete in the new OS
-# - After deployment, copies AutoPilot script into C:\OSDCloud\AutoPilot
-# - Creates a desktop shortcut "Run AutoPilot Enrollment" for use in Audit Mode
+# - After deployment, stages AutoPilot script into C:\OSDCloud\AutoPilot
+# - Registers a RunOnce in the deployed OS so that when you go to Audit Mode,
+#   the AutoPilot script auto-launches at first logon (Administrator)
 
 Start-Transcript -Path X:\Windows\Temp\OSDCloudGUI.log -Force
 
@@ -76,49 +77,61 @@ try {
     Invoke-WebRequest -Uri $AutoPilotScriptUrl -OutFile $TargetScript -UseBasicParsing
     Write-Host "AutoPilot script downloaded successfully." -ForegroundColor Green
 
-    # Create a desktop shortcut to run AutoPilot in full Windows (Audit Mode)
-    $PublicDesktop = "C:\Users\Public\Desktop"
-    New-Item -ItemType Directory -Path $PublicDesktop -Force | Out-Null
+    # --------------------------------------------
+    # Register RunOnce in the OFFLINE OS so Audit Mode auto-runs AutoPilot
+    # --------------------------------------------
+    Write-Host "Configuring RunOnce in offline OS to auto-launch AutoPilot in Audit Mode..." -ForegroundColor Cyan
 
-    $ShortcutPath = Join-Path $PublicDesktop "Run AutoPilot Enrollment.lnk"
-    $WScriptShell = New-Object -ComObject WScript.Shell
-    $Shortcut     = $WScriptShell.CreateShortcut($ShortcutPath)
-    $Shortcut.TargetPath       = "powershell.exe"
-    $Shortcut.Arguments        = "-ExecutionPolicy Bypass -File `"$TargetScript`""
-    $Shortcut.WorkingDirectory = $TargetRoot
-    $Shortcut.WindowStyle      = 1
-    $Shortcut.IconLocation     = "%SystemRoot%\System32\shell32.dll,1"
-    $Shortcut.Save()
+    $OfflineSoftware = "C:\Windows\System32\config\SOFTWARE"
+    $TempHiveName    = "OSDCloudOS"
 
-    # Drop a small README for the tech
+    # Load the offline SOFTWARE hive from the deployed OS
+    & reg.exe load HKLM\$TempHiveName $OfflineSoftware | Out-Null
+
+    $runOnceKey = "HKLM\$TempHiveName\Microsoft\Windows\CurrentVersion\RunOnce"
+    $runOnceName = "RunAutoPilot"
+    $runOnceCmd  = "powershell.exe -ExecutionPolicy Bypass -File `"C:\OSDCloud\AutoPilot\AutoPilotScript.ps1`""
+
+    # Create / update the RunOnce entry
+    & reg.exe add $runOnceKey /v $runOnceName /t REG_SZ /d "$runOnceCmd" /f | Out-Null
+
+    # Unload the hive
+    & reg.exe unload HKLM\$TempHiveName | Out-Null
+
+    Write-Host "RunOnce configured. AutoPilot will auto-start at first logon (e.g., Audit Mode)." -ForegroundColor Green
+
+    # Optional: drop a README for the tech
     $ReadmePath = Join-Path $TargetRoot "README.txt"
     @"
 OSDCloud + AutoPilot Workflow
 
-1. After imaging, when Windows first boots and shows the OOBE screen,
-   press Ctrl+Shift+F3 to enter Audit Mode.
+1. OSDCloud has deployed Windows and enabled Windows Update via SetupComplete.
 
-2. In Audit Mode (Administrator desktop), double-click:
-   'Run AutoPilot Enrollment' shortcut on the desktop.
+2. On first boot, Windows may apply updates and reboot once.
 
-3. Follow the prompts in the AutoPilot script (including Microsoft sign-in
-   and authentication code steps).
+3. When you see the first OOBE screen, press Ctrl+Shift+F3 to enter Audit Mode.
 
-4. When AutoPilot is finished, run Sysprep to return to OOBE, e.g.:
-   Start -> Run:
+4. When Windows logs into Audit Mode (Administrator), the following will happen AUTOMATICALLY:
+   - 'AutoPilotScript.ps1' will run from:
+     C:\OSDCloud\AutoPilot\AutoPilotScript.ps1
+
+5. Follow all prompts in the AutoPilot script (including Microsoft sign-in and authentication code steps).
+
+6. When AutoPilot is finished, you can sysprep back to OOBE, for example:
    C:\Windows\System32\Sysprep\Sysprep.exe /oobe /reboot /quiet
 
 "@ | Set-Content -Path $ReadmePath -Encoding UTF8
 
-    Write-Host "AutoPilot script and desktop shortcut staged successfully." -ForegroundColor Green
+    Write-Host "AutoPilot staging and RunOnce configuration completed." -ForegroundColor Green
 }
 catch {
-    Write-Host "Failed to stage AutoPilot script into deployed OS: $_" -ForegroundColor Yellow
+    Write-Host "Failed to stage AutoPilot script or configure RunOnce: $_" -ForegroundColor Yellow
 }
 
-Write-Host "You can now reboot the system. On first boot, press Ctrl+Shift+F3 to enter Audit Mode and run AutoPilot." -ForegroundColor Yellow
-Write-Host "Rebooting via wpeutil reboot..." -ForegroundColor Cyan
+Write-Host "You can now reboot the system. On first boot, if you press Ctrl+Shift+F3 into Audit Mode," -ForegroundColor Yellow
+Write-Host "the AutoPilot script will auto-launch for manual Microsoft authentication and enrollment." -ForegroundColor Yellow
 
+Write-Host "Rebooting via wpeutil reboot..." -ForegroundColor Cyan
 wpeutil reboot
 
 Stop-Transcript
