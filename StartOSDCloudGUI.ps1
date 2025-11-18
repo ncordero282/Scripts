@@ -1,7 +1,7 @@
 # Master OSDCloud WinPE script:
 # - Enables Windows Update via SetupComplete in the new OS
-# - Optionally runs your AutoPilot enrollment script in WinPE after deployment
-# - Cancels any pending auto-reboot from OSDCloud so AutoPilot can finish
+# - After deployment, copies AutoPilot script into C:\OSDCloud\AutoPilot
+# - Creates a desktop shortcut "Run AutoPilot Enrollment" for use in Audit Mode
 
 Start-Transcript -Path X:\Windows\Temp\OSDCloudGUI.log -Force
 
@@ -29,26 +29,6 @@ try {
 Write-Host "Manufacturer: $Mfg"
 Write-Host "Model       : $Model"
 
-# -------------------------------
-# Prompt for AutoPilot enrollment
-# -------------------------------
-Add-Type -AssemblyName System.Windows.Forms
-
-$dialogResult = [System.Windows.Forms.MessageBox]::Show(
-    "Would you like to ENABLE AutoPilot enrollment after deployment?",
-    "OSDCloud - AutoPilot Option",
-    [System.Windows.Forms.MessageBoxButtons]::YesNo,
-    [System.Windows.Forms.MessageBoxIcon]::Question
-)
-
-if ($dialogResult -eq [System.Windows.Forms.DialogResult]::Yes) {
-    $AutoPilotEnabled = $true
-    Write-Host "AutoPilot ENABLED. It will run after deployment." -ForegroundColor Green
-} else {
-    $AutoPilotEnabled = $false
-    Write-Host "AutoPilot DISABLED. It will NOT run after deployment." -ForegroundColor Yellow
-}
-
 # --------------------------------------------
 # Enable Windows Update in the deployed image
 # --------------------------------------------
@@ -75,101 +55,70 @@ try {
     return
 }
 
-Write-Host "OSDCloud deployment completed. Attempting to cancel any pending reboot..." -ForegroundColor Cyan
+Write-Host "OSDCloud deployment completed." -ForegroundColor Cyan
 
-# Try to cancel any pending shutdown/reboot that OSDCloud scheduled
+# At this point, the new OS should be on C:
+
+# --------------------------------------------
+# Stage AutoPilot script into the deployed OS
+# --------------------------------------------
+$AutoPilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/AutoPilotScript.ps1"
+$TargetRoot         = "C:\OSDCloud\AutoPilot"
+$TargetScript       = Join-Path $TargetRoot "AutoPilotScript.ps1"
+
 try {
-    shutdown.exe /a | Out-Null
-    Write-Host "Pending shutdown/reboot canceled (if any)." -ForegroundColor Green
-} catch {
-    Write-Host "No pending shutdown to cancel or shutdown /a failed: $_" -ForegroundColor Yellow
+    Write-Host "Staging AutoPilot script into deployed OS at $TargetScript" -ForegroundColor Cyan
+
+    # Ensure target folder exists
+    New-Item -ItemType Directory -Path $TargetRoot -Force | Out-Null
+
+    # Download the latest AutoPilot script into C:\OSDCloud\AutoPilot
+    Invoke-WebRequest -Uri $AutoPilotScriptUrl -OutFile $TargetScript -UseBasicParsing
+    Write-Host "AutoPilot script downloaded successfully." -ForegroundColor Green
+
+    # Create a desktop shortcut to run AutoPilot in full Windows (Audit Mode)
+    $PublicDesktop = "C:\Users\Public\Desktop"
+    New-Item -ItemType Directory -Path $PublicDesktop -Force | Out-Null
+
+    $ShortcutPath = Join-Path $PublicDesktop "Run AutoPilot Enrollment.lnk"
+    $WScriptShell = New-Object -ComObject WScript.Shell
+    $Shortcut     = $WScriptShell.CreateShortcut($ShortcutPath)
+    $Shortcut.TargetPath       = "powershell.exe"
+    $Shortcut.Arguments        = "-ExecutionPolicy Bypass -File `"$TargetScript`""
+    $Shortcut.WorkingDirectory = $TargetRoot
+    $Shortcut.WindowStyle      = 1
+    $Shortcut.IconLocation     = "%SystemRoot%\System32\shell32.dll,1"
+    $Shortcut.Save()
+
+    # Drop a small README for the tech
+    $ReadmePath = Join-Path $TargetRoot "README.txt"
+    @"
+OSDCloud + AutoPilot Workflow
+
+1. After imaging, when Windows first boots and shows the OOBE screen,
+   press Ctrl+Shift+F3 to enter Audit Mode.
+
+2. In Audit Mode (Administrator desktop), double-click:
+   'Run AutoPilot Enrollment' shortcut on the desktop.
+
+3. Follow the prompts in the AutoPilot script (including Microsoft sign-in
+   and authentication code steps).
+
+4. When AutoPilot is finished, run Sysprep to return to OOBE, e.g.:
+   Start -> Run:
+   C:\Windows\System32\Sysprep\Sysprep.exe /oobe /reboot /quiet
+
+"@ | Set-Content -Path $ReadmePath -Encoding UTF8
+
+    Write-Host "AutoPilot script and desktop shortcut staged successfully." -ForegroundColor Green
+}
+catch {
+    Write-Host "Failed to stage AutoPilot script into deployed OS: $_" -ForegroundColor Yellow
 }
 
-# --------------------------------------------
-# Prepare logging for AutoPilot
-# --------------------------------------------
-$LogRoot = 'C:\OSDCloud\Logs'
-$null = New-Item -ItemType Directory -Path $LogRoot -Force -ErrorAction SilentlyContinue
-$AutoPilotLog = Join-Path $LogRoot 'AutoPilot_WinPE.log'
+Write-Host "You can now reboot the system. On first boot, press Ctrl+Shift+F3 to enter Audit Mode and run AutoPilot." -ForegroundColor Yellow
+Write-Host "Rebooting via wpeutil reboot..." -ForegroundColor Cyan
 
-# --------------------------------------------
-# Run AutoPilot script (in WinPE) if enabled
-# --------------------------------------------
-if ($AutoPilotEnabled) {
-    Write-Host "Running AutoPilot enrollment script from GitHub..." -ForegroundColor Cyan
-
-    try {
-        $AutoPilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/AutoPilotScript.ps1"
-        $LocalScript        = "X:\Windows\Temp\AutoPilotScript.ps1"
-
-        Invoke-WebRequest -Uri $AutoPilotScriptUrl -OutFile $LocalScript -UseBasicParsing
-        Write-Host "AutoPilot script downloaded successfully to $LocalScript" -ForegroundColor Green
-
-        # Run your script with full interactivity AND log its output to C:\OSDCloud\Logs
-        Write-Host "Starting AutoPilot script (logging to $AutoPilotLog)..." -ForegroundColor Cyan
-
-        & powershell.exe -ExecutionPolicy Bypass -File $LocalScript *>> $AutoPilotLog
-        $exitCode = $LASTEXITCODE
-
-        if ($exitCode -ne 0) {
-            Write-Host "AutoPilot script exited with code $exitCode" -ForegroundColor Yellow
-            [System.Windows.Forms.MessageBox]::Show(
-                "AutoPilot script exited with code $exitCode. 
-Error details are logged in:
-$AutoPilotLog
-
-You can review this log later from Windows.",
-                "AutoPilot Warning",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Warning
-            ) | Out-Null
-        } else {
-            Write-Host "AutoPilot script execution completed successfully." -ForegroundColor Green
-            [System.Windows.Forms.MessageBox]::Show(
-                "AutoPilot enrollment has finished successfully.
-You can now reboot the system to continue to Windows.",
-                "OSDCloud - AutoPilot Complete",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Information
-            ) | Out-Null
-        }
-    }
-    catch {
-        $msg = "Error running AutoPilot script: $_"
-        Write-Host $msg -ForegroundColor Red
-
-        # Log the error to C:\OSDCloud\Logs as well
-        $msg | Out-File -FilePath $AutoPilotLog -Encoding UTF8 -Append
-
-        [System.Windows.Forms.MessageBox]::Show(
-            "An error occurred while running AutoPilot. 
-Details have been logged to:
-$AutoPilotLog
-
-You can review this log later from Windows.",
-            "AutoPilot Error",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        ) | Out-Null
-    }
-}
-
-# --------------------------------------------
-# Final: let YOU control the reboot
-# --------------------------------------------
-[System.Windows.Forms.MessageBox]::Show(
-    "OSDCloud deployment is complete.
-
-If you ran AutoPilot, its output (and any errors) are in:
-$AutoPilotLog
-
-Click OK to reboot now and boot from the internal drive.",
-    "OSDCloud - Ready to Reboot",
-    [System.Windows.Forms.MessageBoxButtons]::OK,
-    [System.Windows.Forms.MessageBoxIcon]::Information
-) | Out-Null
-
-Write-Host "Rebooting system via wpeutil reboot..." -ForegroundColor Cyan
 wpeutil reboot
 
 Stop-Transcript
