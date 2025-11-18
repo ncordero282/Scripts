@@ -1,8 +1,7 @@
 # Master OSDCloud WinPE script:
 # - Enables Windows Update via SetupComplete in the new OS
 # - After deployment, stages AutoPilot script into C:\OSDCloud\AutoPilot
-# - Registers a RunOnce in the deployed OS so that when you go to Audit Mode,
-#   the AutoPilot script auto-launches at first logon (Administrator)
+# - Adds a Startup cmd that auto-runs AutoPilot ONLY in Audit Mode
 
 Start-Transcript -Path X:\Windows\Temp\OSDCloudGUI.log -Force
 
@@ -78,29 +77,33 @@ try {
     Write-Host "AutoPilot script downloaded successfully." -ForegroundColor Green
 
     # --------------------------------------------
-    # Register RunOnce in the OFFLINE OS so Audit Mode auto-runs AutoPilot
+    # Create wrapper CMD that only runs in Audit Mode
     # --------------------------------------------
-    Write-Host "Configuring RunOnce in offline OS to auto-launch AutoPilot in Audit Mode..." -ForegroundColor Cyan
+    $WrapperCmd = Join-Path $TargetRoot "LaunchAutoPilot.cmd"
 
-    $OfflineSoftware = "C:\Windows\System32\config\SOFTWARE"
-    $TempHiveName    = "OSDCloudOS"
+    @"
+@echo off
+REM Only run in Audit Mode (AuditInProgress = 1)
+reg query "HKLM\System\Setup" /v AuditInProgress | find "0x1" >nul
+if errorlevel 1 goto :EOF
 
-    # Load the offline SOFTWARE hive from the deployed OS
-    & reg.exe load HKLM\$TempHiveName $OfflineSoftware | Out-Null
+powershell.exe -ExecutionPolicy Bypass -File "C:\OSDCloud\AutoPilot\AutoPilotScript.ps1"
+"@ | Set-Content -Path $WrapperCmd -Encoding ASCII
 
-    $runOnceKey = "HKLM\$TempHiveName\Microsoft\Windows\CurrentVersion\RunOnce"
-    $runOnceName = "RunAutoPilot"
-    $runOnceCmd  = "powershell.exe -ExecutionPolicy Bypass -File `"C:\OSDCloud\AutoPilot\AutoPilotScript.ps1`""
+    Write-Host "Created LaunchAutoPilot.cmd wrapper." -ForegroundColor Green
 
-    # Create / update the RunOnce entry
-    & reg.exe add $runOnceKey /v $runOnceName /t REG_SZ /d "$runOnceCmd" /f | Out-Null
+    # --------------------------------------------
+    # Add wrapper to All Users Startup folder
+    # --------------------------------------------
+    $StartupFolder = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
+    New-Item -ItemType Directory -Path $StartupFolder -Force | Out-Null
 
-    # Unload the hive
-    & reg.exe unload HKLM\$TempHiveName | Out-Null
+    $StartupCmd = Join-Path $StartupFolder "LaunchAutoPilot.cmd"
+    Copy-Item $WrapperCmd -Destination $StartupCmd -Force
 
-    Write-Host "RunOnce configured. AutoPilot will auto-start at first logon (e.g., Audit Mode)." -ForegroundColor Green
+    Write-Host "LaunchAutoPilot.cmd copied to Startup: $StartupCmd" -ForegroundColor Green
 
-    # Optional: drop a README for the tech
+    # Optional README for the tech
     $ReadmePath = Join-Path $TargetRoot "README.txt"
     @"
 OSDCloud + AutoPilot Workflow
@@ -112,24 +115,28 @@ OSDCloud + AutoPilot Workflow
 3. When you see the first OOBE screen, press Ctrl+Shift+F3 to enter Audit Mode.
 
 4. When Windows logs into Audit Mode (Administrator), the following will happen AUTOMATICALLY:
-   - 'AutoPilotScript.ps1' will run from:
-     C:\OSDCloud\AutoPilot\AutoPilotScript.ps1
+   - LaunchAutoPilot.cmd in the Startup folder will run.
+   - It will check HKLM\System\Setup\AuditInProgress.
+   - If AuditInProgress = 1, it will run:
+       C:\OSDCloud\AutoPilot\AutoPilotScript.ps1
+     and show all normal Microsoft sign-in / auth prompts.
 
-5. Follow all prompts in the AutoPilot script (including Microsoft sign-in and authentication code steps).
-
-6. When AutoPilot is finished, you can sysprep back to OOBE, for example:
+5. When AutoPilot finishes, you can sysprep back to OOBE, for example:
    C:\Windows\System32\Sysprep\Sysprep.exe /oobe /reboot /quiet
+
+6. On later user logons (after sysprep), AuditInProgress = 0,
+   so LaunchAutoPilot.cmd exits immediately and does nothing.
 
 "@ | Set-Content -Path $ReadmePath -Encoding UTF8
 
-    Write-Host "AutoPilot staging and RunOnce configuration completed." -ForegroundColor Green
+    Write-Host "AutoPilot staging and Startup configuration completed." -ForegroundColor Green
 }
 catch {
-    Write-Host "Failed to stage AutoPilot script or configure RunOnce: $_" -ForegroundColor Yellow
+    Write-Host "Failed to stage AutoPilot script or configure Startup: $_" -ForegroundColor Yellow
 }
 
-Write-Host "You can now reboot the system. On first boot, if you press Ctrl+Shift+F3 into Audit Mode," -ForegroundColor Yellow
-Write-Host "the AutoPilot script will auto-launch for manual Microsoft authentication and enrollment." -ForegroundColor Yellow
+Write-Host "You can now reboot the system. On first boot, press Ctrl+Shift+F3 into Audit Mode;" -ForegroundColor Yellow
+Write-Host "when the Administrator desktop appears, AutoPilot will auto-launch." -ForegroundColor Yellow
 
 Write-Host "Rebooting via wpeutil reboot..." -ForegroundColor Cyan
 wpeutil reboot
