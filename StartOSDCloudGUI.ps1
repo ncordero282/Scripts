@@ -1,6 +1,7 @@
 # Master OSDCloud WinPE script:
 # - Enables Windows Update via SetupComplete in the new OS
 # - Optionally runs your AutoPilot enrollment script in WinPE after deployment
+# - Cancels any pending auto-reboot from OSDCloud so AutoPilot can finish
 
 Start-Transcript -Path X:\Windows\Temp\OSDCloudGUI.log -Force
 
@@ -17,7 +18,7 @@ try {
 # Show basic hardware info (FYI)
 # -------------------------------
 try {
-    $cs   = Get-CimInstance -ClassName Win32_ComputerSystem
+    $cs    = Get-CimInstance -ClassName Win32_ComputerSystem
     $Model = $cs.Model
     $Mfg   = $cs.Manufacturer
 } catch {
@@ -55,9 +56,8 @@ if (-not $Global:OSDCloud) {
     $Global:OSDCloud = [ordered]@{}
 }
 
-# Tell OSDCloud to add SetupComplete to run Start-WindowsUpdate
 $Global:OSDCloud.WindowsUpdate = $true
-# Optional: also let Windows try to pull driver updates
+# Optional:
 # $Global:OSDCloud.WindowsUpdateDrivers = $true
 
 Write-Host "OSDCloud WindowsUpdate flag set to: $($Global:OSDCloud.WindowsUpdate)" -ForegroundColor Cyan
@@ -75,7 +75,22 @@ try {
     return
 }
 
-Write-Host "OSDCloud deployment completed." -ForegroundColor Cyan
+Write-Host "OSDCloud deployment completed. Attempting to cancel any pending reboot..." -ForegroundColor Cyan
+
+# Try to cancel any pending shutdown/reboot that OSDCloud scheduled
+try {
+    shutdown.exe /a | Out-Null
+    Write-Host "Pending shutdown/reboot canceled (if any)." -ForegroundColor Green
+} catch {
+    Write-Host "No pending shutdown to cancel or shutdown /a failed: $_" -ForegroundColor Yellow
+}
+
+# --------------------------------------------
+# Prepare logging for AutoPilot
+# --------------------------------------------
+$LogRoot = 'C:\OSDCloud\Logs'
+$null = New-Item -ItemType Directory -Path $LogRoot -Force -ErrorAction SilentlyContinue
+$AutoPilotLog = Join-Path $LogRoot 'AutoPilot_WinPE.log'
 
 # --------------------------------------------
 # Run AutoPilot script (in WinPE) if enabled
@@ -90,23 +105,48 @@ if ($AutoPilotEnabled) {
         Invoke-WebRequest -Uri $AutoPilotScriptUrl -OutFile $LocalScript -UseBasicParsing
         Write-Host "AutoPilot script downloaded successfully to $LocalScript" -ForegroundColor Green
 
-        # Run your script with full interactivity for manual input
-        & powershell.exe -ExecutionPolicy Bypass -File $LocalScript
+        # Run your script with full interactivity AND log its output to C:\OSDCloud\Logs
+        Write-Host "Starting AutoPilot script (logging to $AutoPilotLog)..." -ForegroundColor Cyan
 
-        Write-Host "AutoPilot script execution completed." -ForegroundColor Green
+        & powershell.exe -ExecutionPolicy Bypass -File $LocalScript *>> $AutoPilotLog
+        $exitCode = $LASTEXITCODE
 
-        [System.Windows.Forms.MessageBox]::Show(
-            "AutoPilot enrollment has finished. 
-After you close this message, REBOOT the system to continue to OOBE.",
-            "OSDCloud - AutoPilot Complete",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Information
-        ) | Out-Null
+        if ($exitCode -ne 0) {
+            Write-Host "AutoPilot script exited with code $exitCode" -ForegroundColor Yellow
+            [System.Windows.Forms.MessageBox]::Show(
+                "AutoPilot script exited with code $exitCode. 
+Error details are logged in:
+$AutoPilotLog
+
+You can review this log later from Windows.",
+                "AutoPilot Warning",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+        } else {
+            Write-Host "AutoPilot script execution completed successfully." -ForegroundColor Green
+            [System.Windows.Forms.MessageBox]::Show(
+                "AutoPilot enrollment has finished successfully.
+You can now reboot the system to continue to Windows.",
+                "OSDCloud - AutoPilot Complete",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            ) | Out-Null
+        }
     }
     catch {
-        Write-Host "Error running AutoPilot script: $_" -ForegroundColor Red
+        $msg = "Error running AutoPilot script: $_"
+        Write-Host $msg -ForegroundColor Red
+
+        # Log the error to C:\OSDCloud\Logs as well
+        $msg | Out-File -FilePath $AutoPilotLog -Encoding UTF8 -Append
+
         [System.Windows.Forms.MessageBox]::Show(
-            "An error occurred while running AutoPilot. Check OSDCloudGUI.log for details.",
+            "An error occurred while running AutoPilot. 
+Details have been logged to:
+$AutoPilotLog
+
+You can review this log later from Windows.",
             "AutoPilot Error",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Error
@@ -114,7 +154,22 @@ After you close this message, REBOOT the system to continue to OOBE.",
     }
 }
 
-Write-Host "If everything is done, reboot with:  wpeutil reboot" -ForegroundColor Yellow
-Write-Host "Then boot from the internal drive into OOBE." -ForegroundColor Yellow
+# --------------------------------------------
+# Final: let YOU control the reboot
+# --------------------------------------------
+[System.Windows.Forms.MessageBox]::Show(
+    "OSDCloud deployment is complete.
+
+If you ran AutoPilot, its output (and any errors) are in:
+$AutoPilotLog
+
+Click OK to reboot now and boot from the internal drive.",
+    "OSDCloud - Ready to Reboot",
+    [System.Windows.Forms.MessageBoxButtons]::OK,
+    [System.Windows.Forms.MessageBoxIcon]::Information
+) | Out-Null
+
+Write-Host "Rebooting system via wpeutil reboot..." -ForegroundColor Cyan
+wpeutil reboot
 
 Stop-Transcript
