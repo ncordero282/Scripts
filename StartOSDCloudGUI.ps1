@@ -1,7 +1,9 @@
 # Master OSDCloud WinPE script:
 # - Enables Windows Update via SetupComplete in the new OS
+# - Runs the OSDCloud GUI
 # - After deployment, stages AutoPilot script into <OSDrive>:\OSDCloud\AutoPilot
-# - Adds a Startup cmd that auto-runs AutoPilot ONLY in Audit Mode
+# - Creates a "Run AutoPilot Enrollment" desktop shortcut in the deployed OS
+#   (you will run it manually in Audit Mode)
 
 Start-Transcript -Path X:\Windows\Temp\OSDCloudGUI.log -Force
 
@@ -37,7 +39,7 @@ if (-not $Global:OSDCloud) {
 }
 
 $Global:OSDCloud.WindowsUpdate = $true
-# Optional:
+# Optional: enable driver updates as well
 # $Global:OSDCloud.WindowsUpdateDrivers = $true
 
 Write-Host "OSDCloud WindowsUpdate flag set to: $($Global:OSDCloud.WindowsUpdate)" -ForegroundColor Cyan
@@ -58,7 +60,7 @@ try {
 Write-Host "OSDCloud deployment completed." -ForegroundColor Cyan
 
 # --------------------------------------------
-# Detect the deployed Windows volume (NOT assuming C:)
+# Detect the deployed Windows volume (do NOT assume C:)
 # --------------------------------------------
 Write-Host "Detecting deployed Windows volume..." -ForegroundColor Cyan
 
@@ -82,7 +84,7 @@ if (-not $osDriveLetter) {
     Write-Host "Could not find deployed Windows volume (no drive with \Windows\System32\config\SYSTEM)." -ForegroundColor Red
     Write-Host "AutoPilot staging will be skipped." -ForegroundColor Red
     Stop-Transcript
-    exit
+    return
 }
 
 $osRoot = "$osDriveLetter`:"
@@ -102,38 +104,28 @@ try {
     # Ensure target folder exists
     New-Item -ItemType Directory -Path $TargetRoot -Force | Out-Null
 
-    # Download the latest AutoPilot script into <OSDrive>:\OSDCloud\AutoPilot
+    # Download latest AutoPilot script into <OSDrive>:\OSDCloud\AutoPilot
     Invoke-WebRequest -Uri $AutoPilotScriptUrl -OutFile $TargetScript -UseBasicParsing
     Write-Host "AutoPilot script downloaded successfully." -ForegroundColor Green
 
     # --------------------------------------------
-    # Create wrapper CMD that only runs in Audit Mode
+    # Create desktop shortcut in deployed OS
     # --------------------------------------------
-    $WrapperCmd = Join-Path $TargetRoot "LaunchAutoPilot.cmd"
+    $PublicDesktop = Join-Path $osRoot "Users\Public\Desktop"
+    New-Item -ItemType Directory -Path $PublicDesktop -Force | Out-Null
 
-    @"
-@echo off
-REM Only run in Audit Mode (AuditInProgress = 1)
-reg query "HKLM\System\Setup" /v AuditInProgress | find "0x1" >nul
-if errorlevel 1 goto :EOF
+    $ShortcutPath = Join-Path $PublicDesktop "Run AutoPilot Enrollment.lnk"
 
-powershell.exe -ExecutionPolicy Bypass -File "$TargetScript"
-"@ | Set-Content -Path $WrapperCmd -Encoding ASCII
+    $WScriptShell = New-Object -ComObject WScript.Shell
+    $Shortcut     = $WScriptShell.CreateShortcut($ShortcutPath)
+    $Shortcut.TargetPath       = "powershell.exe"
+    $Shortcut.Arguments        = "-ExecutionPolicy Bypass -File `"$TargetScript`""
+    $Shortcut.WorkingDirectory = $TargetRoot
+    $Shortcut.WindowStyle      = 1
+    $Shortcut.IconLocation     = "%SystemRoot%\System32\shell32.dll,1"
+    $Shortcut.Save()
 
-    Write-Host "Created LaunchAutoPilot.cmd wrapper at $WrapperCmd" -ForegroundColor Green
-
-    # --------------------------------------------
-    # Add wrapper to All Users Startup folder on the deployed OS
-    # --------------------------------------------
-    $StartupFolder = Join-Path $osRoot "ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
-    New-Item -ItemType Directory -Path $StartupFolder -Force | Out-Null
-
-    $StartupCmd = Join-Path $StartupFolder "LaunchAutoPilot.cmd"
-    Copy-Item $WrapperCmd -Destination $StartupCmd -Force
-
-    Write-Host "LaunchAutoPilot.cmd copied to Startup: $StartupCmd" -ForegroundColor Green
-
-    # Optional README for the tech
+    # Drop README for techs
     $ReadmePath = Join-Path $TargetRoot "README.txt"
     @"
 OSDCloud + AutoPilot Workflow
@@ -144,29 +136,28 @@ OSDCloud + AutoPilot Workflow
 
 3. When you see the first OOBE screen, press Ctrl+Shift+F3 to enter Audit Mode.
 
-4. When Windows logs into Audit Mode (Administrator), the following will happen AUTOMATICALLY:
-   - LaunchAutoPilot.cmd in the Startup folder will run.
-   - It will check HKLM\System\Setup\AuditInProgress.
-   - If AuditInProgress = 1, it will run:
-       $TargetScript
-     and show all normal Microsoft sign-in / auth prompts.
+4. In Audit Mode (Administrator desktop), double-click:
+   'Run AutoPilot Enrollment' on the desktop.
 
-5. When AutoPilot finishes, you can sysprep back to OOBE, for example:
-   $osRoot`Windows\System32\Sysprep\Sysprep.exe /oobe /reboot /quiet
+5. Follow all prompts in the AutoPilot script, including:
+   - Microsoft admin sign-in
+   - Authentication code steps
+   - Any other manual entries you require.
 
-6. On later user logons (after sysprep), AuditInProgress = 0,
-   so LaunchAutoPilot.cmd exits immediately and does nothing.
+6. When AutoPilot is finished, sysprep back to OOBE, for example:
+   $osRoot\Windows\System32\Sysprep\Sysprep.exe /oobe /reboot /quiet
 
 "@ | Set-Content -Path $ReadmePath -Encoding UTF8
 
-    Write-Host "AutoPilot staging and Startup configuration completed." -ForegroundColor Green
+    Write-Host "AutoPilot script and desktop shortcut staged successfully." -ForegroundColor Green
 }
 catch {
-    Write-Host "Failed to stage AutoPilot script or configure Startup: $_" -ForegroundColor Yellow
+    Write-Host "Failed to stage AutoPilot script or create shortcut: $_" -ForegroundColor Yellow
 }
 
-Write-Host "You can now reboot the system. On first boot, press Ctrl+Shift+F3 into Audit Mode;" -ForegroundColor Yellow
-Write-Host "when the Administrator desktop appears, AutoPilot will auto-launch." -ForegroundColor Yellow
+Write-Host "You can now reboot the system. After updates and first boot:" -ForegroundColor Yellow
+Write-Host "  - At OOBE, press Ctrl+Shift+F3 to enter Audit Mode," -ForegroundColor Yellow
+Write-Host "  - Then double-click 'Run AutoPilot Enrollment' on the desktop." -ForegroundColor Yellow
 
 Write-Host "Rebooting via wpeutil reboot..." -ForegroundColor Cyan
 wpeutil reboot
