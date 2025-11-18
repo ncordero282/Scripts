@@ -1,6 +1,6 @@
 # Master OSDCloud WinPE script:
 # - Enables Windows Update via SetupComplete in the new OS
-# - After deployment, stages AutoPilot script into C:\OSDCloud\AutoPilot
+# - After deployment, stages AutoPilot script into <OSDrive>:\OSDCloud\AutoPilot
 # - Adds a Startup cmd that auto-runs AutoPilot ONLY in Audit Mode
 
 Start-Transcript -Path X:\Windows\Temp\OSDCloudGUI.log -Force
@@ -57,13 +57,43 @@ try {
 
 Write-Host "OSDCloud deployment completed." -ForegroundColor Cyan
 
-# At this point, the new OS should be on C:
+# --------------------------------------------
+# Detect the deployed Windows volume (NOT assuming C:)
+# --------------------------------------------
+Write-Host "Detecting deployed Windows volume..." -ForegroundColor Cyan
+
+$osDriveLetter = $null
+
+try {
+    $drives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Name -ne 'X' }
+
+    foreach ($d in $drives) {
+        $path = "$($d.Name):\Windows\System32\config\SYSTEM"
+        if (Test-Path $path) {
+            $osDriveLetter = $d.Name
+            break
+        }
+    }
+} catch {
+    Write-Host "Error while scanning drives for OS volume: $_" -ForegroundColor Red
+}
+
+if (-not $osDriveLetter) {
+    Write-Host "Could not find deployed Windows volume (no drive with \Windows\System32\config\SYSTEM)." -ForegroundColor Red
+    Write-Host "AutoPilot staging will be skipped." -ForegroundColor Red
+    Stop-Transcript
+    exit
+}
+
+$osRoot = "$osDriveLetter`:"
+
+Write-Host "Deployed Windows detected on drive: $osDriveLetter`:" -ForegroundColor Green
 
 # --------------------------------------------
 # Stage AutoPilot script into the deployed OS
 # --------------------------------------------
 $AutoPilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/AutoPilotScript.ps1"
-$TargetRoot         = "C:\OSDCloud\AutoPilot"
+$TargetRoot         = Join-Path $osRoot "OSDCloud\AutoPilot"
 $TargetScript       = Join-Path $TargetRoot "AutoPilotScript.ps1"
 
 try {
@@ -72,7 +102,7 @@ try {
     # Ensure target folder exists
     New-Item -ItemType Directory -Path $TargetRoot -Force | Out-Null
 
-    # Download the latest AutoPilot script into C:\OSDCloud\AutoPilot
+    # Download the latest AutoPilot script into <OSDrive>:\OSDCloud\AutoPilot
     Invoke-WebRequest -Uri $AutoPilotScriptUrl -OutFile $TargetScript -UseBasicParsing
     Write-Host "AutoPilot script downloaded successfully." -ForegroundColor Green
 
@@ -87,15 +117,15 @@ REM Only run in Audit Mode (AuditInProgress = 1)
 reg query "HKLM\System\Setup" /v AuditInProgress | find "0x1" >nul
 if errorlevel 1 goto :EOF
 
-powershell.exe -ExecutionPolicy Bypass -File "C:\OSDCloud\AutoPilot\AutoPilotScript.ps1"
+powershell.exe -ExecutionPolicy Bypass -File "$TargetScript"
 "@ | Set-Content -Path $WrapperCmd -Encoding ASCII
 
-    Write-Host "Created LaunchAutoPilot.cmd wrapper." -ForegroundColor Green
+    Write-Host "Created LaunchAutoPilot.cmd wrapper at $WrapperCmd" -ForegroundColor Green
 
     # --------------------------------------------
-    # Add wrapper to All Users Startup folder
+    # Add wrapper to All Users Startup folder on the deployed OS
     # --------------------------------------------
-    $StartupFolder = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
+    $StartupFolder = Join-Path $osRoot "ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
     New-Item -ItemType Directory -Path $StartupFolder -Force | Out-Null
 
     $StartupCmd = Join-Path $StartupFolder "LaunchAutoPilot.cmd"
@@ -118,11 +148,11 @@ OSDCloud + AutoPilot Workflow
    - LaunchAutoPilot.cmd in the Startup folder will run.
    - It will check HKLM\System\Setup\AuditInProgress.
    - If AuditInProgress = 1, it will run:
-       C:\OSDCloud\AutoPilot\AutoPilotScript.ps1
+       $TargetScript
      and show all normal Microsoft sign-in / auth prompts.
 
 5. When AutoPilot finishes, you can sysprep back to OOBE, for example:
-   C:\Windows\System32\Sysprep\Sysprep.exe /oobe /reboot /quiet
+   $osRoot`Windows\System32\Sysprep\Sysprep.exe /oobe /reboot /quiet
 
 6. On later user logons (after sysprep), AuditInProgress = 0,
    so LaunchAutoPilot.cmd exits immediately and does nothing.
