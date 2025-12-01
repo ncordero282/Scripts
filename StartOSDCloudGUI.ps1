@@ -18,7 +18,7 @@ Start-Transcript -Path X:\Windows\Temp\OSDCloudGUI.log -Force
 # Name of the PPKG file on your OSDCloud USB under \WS1
 $WS1PpkgFileName = 'WS1-Dropship.ppkg'   # <-- change if needed
 
-# Volume label of your OSDCloud USB (default from OSDCloud Creator is usually "OSDCloud")
+# Volume label of your OSDCloud USB (used if Get-Volume exists; otherwise we just scan drives)
 $WS1UsbLabel     = 'OSDCloud'
 
 # Toggle if you ever want to disable the SetupComplete behavior
@@ -27,6 +27,41 @@ $EnableWS1PPKGSetupComplete = $true
 # -------------------------------
 # FUNCTIONS
 # -------------------------------
+
+function Get-UsbDriveWithPPKG {
+    param(
+        [Parameter(Mandatory = $true)][string]$PpkgFileName,
+        [Parameter(Mandatory = $true)][string]$UsbLabel
+    )
+
+    # Try using Get-Volume if available (not always present in WinPE)
+    $usbDriveLetter = $null
+
+    if (Get-Command Get-Volume -ErrorAction SilentlyContinue) {
+        try {
+            $vol = Get-Volume -FileSystemLabel $UsbLabel -ErrorAction SilentlyContinue
+            if ($vol) {
+                $usbDriveLetter = $vol.DriveLetter
+            }
+        } catch {
+            # ignore and fall back to PSDrive scan
+        }
+    }
+
+    # Fallback: scan all filesystem drives except X: and look for \WS1\<PPKG>
+    if (-not $usbDriveLetter) {
+        $drives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Name -ne 'X' }
+        foreach ($d in $drives) {
+            $candidate = "$($d.Name):\WS1\$PpkgFileName"
+            if (Test-Path $candidate) {
+                $usbDriveLetter = $d.Name
+                break
+            }
+        }
+    }
+
+    return $usbDriveLetter
+}
 
 function Invoke-WS1PPKGSetupComplete {
     param(
@@ -42,22 +77,14 @@ function Invoke-WS1PPKGSetupComplete {
 
     # 1) Locate the USB drive
     Write-Host "Locating OSDCloud USB for PPKG..." -ForegroundColor Cyan
-    $usbVolume = Get-Volume -FileSystemLabel $UsbLabel -ErrorAction SilentlyContinue
+    $usbDriveLetter = Get-UsbDriveWithPPKG -PpkgFileName $PpkgFileName -UsbLabel $UsbLabel
 
-    if (-not $usbVolume) {
-        # Fallback: look for a drive that has \WS1\<PPKG> on it
-        $usbVolume = Get-Volume | Where-Object {
-            $dl = ("{0}:" -f $_.DriveLetter)
-            Test-Path (Join-Path $dl "WS1\$PpkgFileName")
-        } | Select-Object -First 1
-    }
-
-    if (-not $usbVolume) {
-        Write-Host "ERROR: Could not find a USB drive containing WS1\$PpkgFileName." -ForegroundColor Red
+    if (-not $usbDriveLetter) {
+        Write-Host "ERROR: Could not find a USB drive containing \WS1\$PpkgFileName." -ForegroundColor Red
         return
     }
 
-    $usbDrive   = ("{0}:" -f $usbVolume.DriveLetter)
+    $usbDrive   = "$usbDriveLetter`:"
     $ppkgSource = Join-Path $usbDrive "WS1\$PpkgFileName"
 
     if (-not (Test-Path $ppkgSource)) {
@@ -94,15 +121,15 @@ function Invoke-WS1PPKGSetupComplete {
 
 try {
     if (Test-Path \$ppkgPath) {
-        Add-Content -Path \$logPath -Value 'Starting PPKG install...'
+        Add-Content -Path \$logPath -Value ("`$(Get-Date) - Starting PPKG install from \$ppkgPath")
         Install-ProvisioningPackage -PackagePath \$ppkgPath -ForceInstall -QuietInstall -ErrorAction Stop
-        Add-Content -Path \$logPath -Value 'PPKG install completed successfully.'
+        Add-Content -Path \$logPath -Value ("`$(Get-Date) - PPKG install completed successfully.")
     } else {
-        Add-Content -Path \$logPath -Value 'PPKG not found at expected path.'
+        Add-Content -Path \$logPath -Value ("`$(Get-Date) - PPKG not found at \$ppkgPath")
     }
 }
 catch {
-    Add-Content -Path \$logPath -Value ("ERROR: " + \$_.Exception.Message)
+    Add-Content -Path \$logPath -Value ("`$(Get-Date) - ERROR: \$($_.Exception.Message)")
 }
 "@
 
@@ -129,7 +156,7 @@ function Stage-WS1PPKGRunOnceHelper {
         [Parameter(Mandatory = $true)][string]$PpkgFileName
     )
 
-    $osDrive = $OsRoot.TrimEnd('\')
+    $osDrive  = $OsRoot.TrimEnd('\')
     $ws1Folder = Join-Path $osDrive 'OSDCloud\WS1'
 
     if (-not (Test-Path $ws1Folder)) {
@@ -138,41 +165,45 @@ function Stage-WS1PPKGRunOnceHelper {
 
     $runOnceScriptPath = Join-Path $ws1Folder 'Register-WS1PPKG-RunOnce.ps1'
 
-    $runOnceContent = @"
+    # Use a single-quoted here-string so no variables are expanded at generation time.
+    $runOnceContent = @'
 param(
-    [string]\$PpkgFileName = '$PpkgFileName',
-    [string]\$UsbDriveLetter = 'D'    # change if your USB is not D:
+    [string]$PpkgFileName = 'PPKGNAME_PLACEHOLDER',
+    [string]$UsbDriveLetter = 'D'    # change if your USB is not D:
 )
 
 Write-Host "=== [WS1 PPKG] RunOnce registration start ===" -ForegroundColor Cyan
 
-\$usbPath   = "\$UsbDriveLetter`:\WS1\`$PpkgFileName"
-\$localRoot = 'C:\WS1\PPKG'
-\$localPath = Join-Path \$localRoot \$PpkgFileName
+$usbPath   = "$UsbDriveLetter:\WS1\$PpkgFileName"
+$localRoot = 'C:\WS1\PPKG'
+$localPath = Join-Path $localRoot $PpkgFileName
 
-if (-not (Test-Path \$usbPath)) {
-    Write-Host "ERROR: PPKG not found on USB at \$usbPath" -ForegroundColor Red
+if (-not (Test-Path $usbPath)) {
+    Write-Host "ERROR: PPKG not found on USB at $usbPath" -ForegroundColor Red
     return
 }
 
-if (-not (Test-Path \$localRoot)) {
-    New-Item -Path \$localRoot -ItemType Directory -Force | Out-Null
+if (-not (Test-Path $localRoot)) {
+    New-Item -Path $localRoot -ItemType Directory -Force | Out-Null
 }
 
-Write-Host "Copying PPKG from \$usbPath to \$localPath..." -ForegroundColor Cyan
-Copy-Item -Path \$usbPath -Destination \$localPath -Force
+Write-Host "Copying PPKG from $usbPath to $localPath..." -ForegroundColor Cyan
+Copy-Item -Path $usbPath -Destination $localPath -Force
 
-\$runOnceCommand = "powershell.exe -ExecutionPolicy Bypass -NoProfile -Command `"Install-ProvisioningPackage -PackagePath '`\$localPath`' -ForceInstall -QuietInstall`""
+$runOnceCommand = "powershell.exe -ExecutionPolicy Bypass -NoProfile -Command `"Install-ProvisioningPackage -PackagePath '$localPath' -ForceInstall -QuietInstall`""
 
 Write-Host "Setting HKLM RunOnce entry to apply PPKG on next logon..." -ForegroundColor Cyan
 
-\$runOnceKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
-New-Item -Path \$runOnceKey -Force | Out-Null
-Set-ItemProperty -Path \$runOnceKey -Name "ApplyWS1PPKG" -Value \$runOnceCommand
+$runOnceKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
+New-Item -Path $runOnceKey -Force | Out-Null
+Set-ItemProperty -Path $runOnceKey -Name "ApplyWS1PPKG" -Value $runOnceCommand
 
 Write-Host "RunOnce registration complete. PPKG will install at the next logon." -ForegroundColor Green
 Write-Host "=== [WS1 PPKG] RunOnce registration done ===" -ForegroundColor Cyan
-"@
+'@
+
+    # Replace placeholder with the actual PPKG file name from config
+    $runOnceContent = $runOnceContent.Replace('PPKGNAME_PLACEHOLDER', $PpkgFileName)
 
     Set-Content -Path $runOnceScriptPath -Value $runOnceContent -Encoding UTF8
 
