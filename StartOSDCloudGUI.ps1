@@ -1,56 +1,45 @@
 <#
 .SYNOPSIS
     Wrapper for Start-OSDCloudGUI to apply Custom Bloatware Removal, Wallpaper, and Audit Mode.
-    
-.DESCRIPTION
-    1. Launches OSDCloudGUI (User must NOT check "Restart" in the GUI).
-    2. Modifies the offline OS to remove bloatware.
-    3. Injects custom Unattend.xml to force Audit Mode.
-    4. Injects Autopilot script to run on first login.
-    5. Automatically reboots the machine.
+    FIXES: 
+    1. Updates OSD module to fix "Invoke-ParseDate" error (Driver failure).
+    2. Adds correct XML namespaces to fix "Unattend Answer File" error.
 #>
 
 # --- CONFIGURATION SECTION ---
-# REPLACE THIS with your direct image URL (JPG/PNG)
 $WallpaperUrl = "https://your-url-here.com/wallpaper.jpg" 
-
-# Your Autopilot Script URL
 $AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/refs/heads/main/AutopilotScript.ps1"
 # -----------------------------
 
-# 1. Initialize OSDCloud Environment
-if (-not (Get-Module -ListAvailable OSD)) {
-    Install-Module OSD -Force
-}
+# 1. FIX: Repair OSD Module (Fixes "Invoke-ParseDate" error)
+Write-Host ">>> Checking OSD Module Version..." -ForegroundColor Cyan
+if (Get-Module OSD) { Remove-Module OSD -Force -ErrorAction SilentlyContinue }
+# Force install the latest version to ensure drivers download correctly
+Install-Module OSD -Force -AllowClobber -Scope CurrentUser
 Import-Module OSD -Force
 
 # 2. Launch OSDCloud GUI
 Write-Host ">>> Launching OSDCloud GUI..." -ForegroundColor Cyan
-Write-Warning "IMPORTANT: Do NOT check 'Restart' or 'Shutdown' in the GUI. Let this script handle the reboot."
+Write-Warning "IMPORTANT: Do NOT check 'Restart' in the GUI."
 Start-OSDCloudGUI
 
-# 3. Post-Processing (Runs after GUI closes)
+# 3. Post-Processing
 $OSDisk = "C:\" 
 
 if (Test-Path "$OSDisk\Windows\System32") {
     Write-Host ">>> OS Detected. Starting Post-Processing..." -ForegroundColor Green
 
-    # --- A. Set Windows Wallpaper ---
+    # --- A. Set Wallpaper ---
     Write-Host "  > Setting Wallpaper..." -ForegroundColor Cyan
     $WallPath = "$OSDisk\Windows\Web\Wallpaper\Windows\img0.jpg"
-    
-    # Backup original
     if (Test-Path $WallPath) { Move-Item $WallPath "$WallPath.bak" -Force }
-    
-    # Download custom wallpaper
     try {
         Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallPath -UseBasicParsing -ErrorAction Stop
     } catch {
-        Write-Warning "  ! Failed to download wallpaper. Restoring default."
         if (Test-Path "$WallPath.bak") { Move-Item "$WallPath.bak" $WallPath -Force }
     }
 
-    # --- B. Remove Bloatware (Offline Removal) ---
+    # --- B. Remove Bloatware ---
     Write-Host "  > Removing Bloatware..." -ForegroundColor Cyan
     $Bloatware = @(
         "*BingWeather*","*GetHelp*","*GetStarted*","*Microsoft3DViewer*",
@@ -66,12 +55,13 @@ if (Test-Path "$OSDisk\Windows\System32") {
     $ScriptDest = "$OSDisk\Windows\Temp\AutopilotScript.ps1"
     Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile $ScriptDest -UseBasicParsing
 
-    # --- D. Configure Audit Mode & RunSynchronous ---
+    # --- D. Configure Audit Mode (FIXED XML) ---
     Write-Host "  > Configuring Boot to Audit Mode..." -ForegroundColor Cyan
     
+    # ADDED: xmlns:wcm definition to fix the parsing error
     $UnattendContent = @"
 <?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend">
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
     <settings pass="oobeSystem">
         <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
             <Reseal>
