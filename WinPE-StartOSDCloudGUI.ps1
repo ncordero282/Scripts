@@ -1,73 +1,44 @@
-<#
-.SYNOPSIS
-WinPE Startup script for OSDCloud USB
-
-.DESCRIPTION
-- Runs in WinPE via Edit-OSDCloudWinPE -StartURL
-- Stages custom SetupComplete payload from the OSDCloudUSB (NTFS) partition to the local OS drive
-  using Set-SetupCompleteOSDCloudUSB
-- Launches the OSDCloud GUI
-
-.NOTES
-Raw URL:
-https://raw.githubusercontent.com/ncordero282/Scripts/refs/heads/main/WinPE-StartOSDCloudGUI.ps1
-#>
-
-[CmdletBinding()]
-param()
+# WinPE-StartOSDCloudGUI.ps1 (StartURL)
+# Purpose: Stage SetupComplete payload from OSDCloudUSB -> local disk, then launch OSDCloud GUI
 
 $ErrorActionPreference = 'Continue'
 
-function Write-Log {
-    param(
-        [Parameter(Mandatory=$true)][string]$Message,
-        [ValidateSet('INFO','WARN','ERROR')][string]$Level = 'INFO'
-    )
-
-    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$ts][$Level] $Message"
-
-    # WinPE console
-    switch ($Level) {
-        'INFO'  { Write-Host $line -ForegroundColor Cyan }
-        'WARN'  { Write-Host $line -ForegroundColor Yellow }
-        'ERROR' { Write-Host $line -ForegroundColor Red }
-    }
-
-    # Best-effort log file in WinPE (X:\Temp usually exists)
+function WL {
+    param([string]$Msg)
     try {
-        $logDir = 'X:\Temp'
-        if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-        Add-Content -Path (Join-Path $logDir 'WinPE-StartOSDCloudGUI.log') -Value $line -ErrorAction SilentlyContinue
+        $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $line = "[$ts] $Msg"
+        Write-Host $line
+        if (-not (Test-Path 'X:\Temp')) { New-Item -ItemType Directory -Path 'X:\Temp' -Force | Out-Null }
+        Add-Content -Path 'X:\Temp\WinPE-StartOSDCloudGUI.log' -Value $line -ErrorAction SilentlyContinue
     } catch {}
 }
 
-Write-Log "=== WinPE Start Script BEGIN ===" "INFO"
+WL "=== WinPE StartURL BEGIN ==="
 
-# Import OSD module
 try {
+    WL "Importing OSD module..."
     Import-Module OSD -Force -ErrorAction Stop
-    Write-Log "Imported OSD module" "INFO"
+    WL "OSD module imported."
 } catch {
-    Write-Log "Failed to import OSD module: $($_.Exception.Message)" "ERROR"
+    WL "ERROR: Import-Module OSD failed: $($_.Exception.Message)"
 }
 
-# Stage custom SetupComplete payload from USB -> local disk
-# This is the KEY FIX: it copies \OSDCloud\Scripts\SetupComplete from the USB to C:\OSDCloud\Scripts\SetupComplete
 try {
-    Write-Log "Running Set-SetupCompleteOSDCloudUSB to stage SetupComplete payload..." "INFO"
+    WL "Running Set-SetupCompleteOSDCloudUSB (stage E:\OSDCloud\Scripts\SetupComplete -> C:\OSDCloud\Scripts\SetupComplete)..."
     Set-SetupCompleteOSDCloudUSB
-    Write-Log "Set-SetupCompleteOSDCloudUSB completed" "INFO"
+    WL "Set-SetupCompleteOSDCloudUSB completed."
 } catch {
-    Write-Log "Set-SetupCompleteOSDCloudUSB failed: $($_.Exception.Message)" "WARN"
+    WL "WARN: Set-SetupCompleteOSDCloudUSB failed: $($_.Exception.Message)"
+    WL "Continuing anyway..."
 }
 
-# Launch OSDCloud GUI
 try {
-    Write-Log "Launching OSDCloud GUI (Start-OSDCloudGUI)..." "INFO"
+    WL "Launching OSDCloud GUI..."
     Start-OSDCloudGUI
+    WL "Start-OSDCloudGUI invoked."
 } catch {
-    Write-Log "Failed to launch OSDCloud GUI: $($_.Exception.Message)" "ERROR"
+    WL "ERROR: Start-OSDCloudGUI failed: $($_.Exception.Message)"
 }
 
-Write-Log "=== WinPE Start Script END ===" "INFO"
+WL "=== WinPE StartURL END ==="
