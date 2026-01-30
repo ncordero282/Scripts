@@ -1,7 +1,22 @@
 <#
 .SYNOPSIS
     Wrapper for Start-OSDCloudGUI to apply Custom Bloatware Removal, Wallpaper, and Audit Mode.
+    
+.DESCRIPTION
+    1. Launches OSDCloudGUI (User must NOT check "Restart" in the GUI).
+    2. Modifies the offline OS to remove bloatware.
+    3. Injects custom Unattend.xml to force Audit Mode.
+    4. Injects Autopilot script to run on first login.
+    5. Automatically reboots the machine.
 #>
+
+# --- CONFIGURATION SECTION ---
+# REPLACE THIS with your direct image URL (JPG/PNG)
+$WallpaperUrl = "https://your-url-here.com/wallpaper.jpg" 
+
+# Your Autopilot Script URL
+$AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/refs/heads/main/AutopilotScript.ps1"
+# -----------------------------
 
 # 1. Initialize OSDCloud Environment
 if (-not (Get-Module -ListAvailable OSD)) {
@@ -9,18 +24,13 @@ if (-not (Get-Module -ListAvailable OSD)) {
 }
 Import-Module OSD -Force
 
-# 2. Define Your Resources
-$WallpaperUrl   = "https://your-url-here.com/wallpaper.jpg" # Replace with your actual wallpaper URL
-$AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/refs/heads/main/AutopilotScript.ps1"
-
-# 3. Launch OSDCloud GUI
-# IMPORTANT: When the GUI opens, perform your deployment but DO NOT CHECK "Reboot" or "Shutdown".
-# You need the script to continue running after the OS is applied.
+# 2. Launch OSDCloud GUI
 Write-Host ">>> Launching OSDCloud GUI..." -ForegroundColor Cyan
+Write-Warning "IMPORTANT: Do NOT check 'Restart' or 'Shutdown' in the GUI. Let this script handle the reboot."
 Start-OSDCloudGUI
 
-# 4. Post-Processing (Runs after GUI closes)
-$OSDisk = "C:\" # OSDCloud typically mounts the applied OS to C:\ in WinPE
+# 3. Post-Processing (Runs after GUI closes)
+$OSDisk = "C:\" 
 
 if (Test-Path "$OSDisk\Windows\System32") {
     Write-Host ">>> OS Detected. Starting Post-Processing..." -ForegroundColor Green
@@ -28,14 +38,20 @@ if (Test-Path "$OSDisk\Windows\System32") {
     # --- A. Set Windows Wallpaper ---
     Write-Host "  > Setting Wallpaper..." -ForegroundColor Cyan
     $WallPath = "$OSDisk\Windows\Web\Wallpaper\Windows\img0.jpg"
+    
     # Backup original
     if (Test-Path $WallPath) { Move-Item $WallPath "$WallPath.bak" -Force }
-    # Download yours (using curl/Invoke-WebRequest)
-    Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallPath -UseBasicParsing
+    
+    # Download custom wallpaper
+    try {
+        Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallPath -UseBasicParsing -ErrorAction Stop
+    } catch {
+        Write-Warning "  ! Failed to download wallpaper. Restoring default."
+        if (Test-Path "$WallPath.bak") { Move-Item "$WallPath.bak" $WallPath -Force }
+    }
 
     # --- B. Remove Bloatware (Offline Removal) ---
     Write-Host "  > Removing Bloatware..." -ForegroundColor Cyan
-    # Define list of apps to remove (wildcards supported)
     $Bloatware = @(
         "*BingWeather*","*GetHelp*","*GetStarted*","*Microsoft3DViewer*",
         "*MicrosoftSolitaireCollection*","*MicrosoftOfficeHub*","*MixedReality*",
@@ -45,15 +61,14 @@ if (Test-Path "$OSDisk\Windows\System32") {
         Get-AppxProvisionedPackage -Path $OSDisk | Where-Object {$_.DisplayName -like $App} | Remove-AppxProvisionedPackage -Path $OSDisk -ErrorAction SilentlyContinue
     }
 
-    # --- C. Inject Autopilot Script for Audit Mode ---
+    # --- C. Inject Autopilot Script ---
     Write-Host "  > Injecting Autopilot Script..." -ForegroundColor Cyan
     $ScriptDest = "$OSDisk\Windows\Temp\AutopilotScript.ps1"
     Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile $ScriptDest -UseBasicParsing
 
-    # --- D. Configure Audit Mode Unattend ---
+    # --- D. Configure Audit Mode & RunSynchronous ---
     Write-Host "  > Configuring Boot to Audit Mode..." -ForegroundColor Cyan
     
-    # We create a specific Unattend.xml that forces Audit Mode and runs your script
     $UnattendContent = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
@@ -81,9 +96,9 @@ if (Test-Path "$OSDisk\Windows\System32") {
     if (-not (Test-Path "$OSDisk\Windows\Panther")) { New-Item -Path "$OSDisk\Windows\Panther" -ItemType Directory -Force }
     $UnattendContent | Out-File -FilePath $UnattendPath -Encoding UTF8 -Force
 
-    Write-Host ">>> Post-Processing Complete. You may now reboot." -ForegroundColor Green
-    # Optional: Automatically reboot
-    # Restart-Computer -Force
+    Write-Host ">>> Post-Processing Complete. Rebooting in 5 seconds..." -ForegroundColor Green
+    Start-Sleep -Seconds 5
+    Restart-Computer -Force
 } else {
-    Write-Warning "OSDCloud did not complete or C:\ is not mounted. Post-processing skipped."
+    Write-Error "OSDCloud did not complete or C:\ is not mounted. Script aborted."
 }
