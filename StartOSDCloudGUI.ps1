@@ -1,187 +1,89 @@
 <#
 .SYNOPSIS
-WinPE StartURL script for OSDCloud
-
-.DESCRIPTION
-- Safe OSD import (timeout to prevent hangs)
-- Enables Windows Update via OSDCloud global flags
-- Stages custom SetupComplete payload from USB to C:\OSDCloud\Scripts\SetupComplete
-- Launches OSDCloud GUI
-- OPTIONAL: stages AutoPilot script into deployed OS + creates desktop shortcut
-
-.NOTES
-Place this file in GitHub as:
-WinPE-StartOSDCloudGUI.ps1
-
-Use StartURL:
-https://raw.githubusercontent.com/ncordero282/Scripts/main/WinPE-StartOSDCloudGUI.ps1
+    Wrapper for Start-OSDCloudGUI to apply Custom Bloatware Removal, Wallpaper, and Audit Mode.
 #>
 
-[CmdletBinding()]
-param()
+# 1. Initialize OSDCloud Environment
+if (-not (Get-Module -ListAvailable OSD)) {
+    Install-Module OSD -Force
+}
+Import-Module OSD -Force
 
-$ErrorActionPreference = 'Continue'
-$ProgressPreference    = 'SilentlyContinue'
+# 2. Define Your Resources
+$WallpaperUrl   = "https://your-url-here.com/wallpaper.jpg" # Replace with your actual wallpaper URL
+$AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/refs/heads/main/AutopilotScript.ps1"
 
-# -------------------------
-# Logging
-# -------------------------
-function WL {
-    param(
-        [Parameter(Mandatory=$true)][string]$Msg,
-        [ValidateSet('INFO','WARN','ERROR')][string]$Level = 'INFO'
+# 3. Launch OSDCloud GUI
+# IMPORTANT: When the GUI opens, perform your deployment but DO NOT CHECK "Reboot" or "Shutdown".
+# You need the script to continue running after the OS is applied.
+Write-Host ">>> Launching OSDCloud GUI..." -ForegroundColor Cyan
+Start-OSDCloudGUI
+
+# 4. Post-Processing (Runs after GUI closes)
+$OSDisk = "C:\" # OSDCloud typically mounts the applied OS to C:\ in WinPE
+
+if (Test-Path "$OSDisk\Windows\System32") {
+    Write-Host ">>> OS Detected. Starting Post-Processing..." -ForegroundColor Green
+
+    # --- A. Set Windows Wallpaper ---
+    Write-Host "  > Setting Wallpaper..." -ForegroundColor Cyan
+    $WallPath = "$OSDisk\Windows\Web\Wallpaper\Windows\img0.jpg"
+    # Backup original
+    if (Test-Path $WallPath) { Move-Item $WallPath "$WallPath.bak" -Force }
+    # Download yours (using curl/Invoke-WebRequest)
+    Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallPath -UseBasicParsing
+
+    # --- B. Remove Bloatware (Offline Removal) ---
+    Write-Host "  > Removing Bloatware..." -ForegroundColor Cyan
+    # Define list of apps to remove (wildcards supported)
+    $Bloatware = @(
+        "*BingWeather*","*GetHelp*","*GetStarted*","*Microsoft3DViewer*",
+        "*MicrosoftSolitaireCollection*","*MicrosoftOfficeHub*","*MixedReality*",
+        "*OneNote*","*People*","*SkypeApp*","*Wallet*","*YourPhone*","*Zune*"
     )
-    try {
-        $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        $line = "[$ts][$Level] $Msg"
-        Write-Host $line
-
-        if (-not (Test-Path 'X:\Temp')) { New-Item -ItemType Directory -Path 'X:\Temp' -Force | Out-Null }
-        Add-Content -Path 'X:\Temp\WinPE-StartOSDCloudGUI.log' -Value $line -ErrorAction SilentlyContinue
-    } catch {}
-}
-
-function Has-Command($name) {
-    try { return [bool](Get-Command $name -ErrorAction SilentlyContinue) } catch { return $false }
-}
-
-WL "=== WinPE StartURL BEGIN ==="
-WL "PSVersion: $($PSVersionTable.PSVersion)" "INFO"
-
-# -------------------------
-# Safe Import OSD (prevents hangs)
-# -------------------------
-WL "Importing OSD module (30s timeout)..." "INFO"
-
-try {
-    $job = Start-Job -ScriptBlock {
-        $ProgressPreference='SilentlyContinue'
-        Import-Module OSD -Force
-        "IMPORTED"
+    foreach ($App in $Bloatware) {
+        Get-AppxProvisionedPackage -Path $OSDisk | Where-Object {$_.DisplayName -like $App} | Remove-AppxProvisionedPackage -Path $OSDisk -ErrorAction SilentlyContinue
     }
 
-    $done = Wait-Job $job -Timeout 30
-    if ($done) {
-        $result = Receive-Job $job -ErrorAction SilentlyContinue
-        WL "OSD import job completed: $result" "INFO"
-    } else {
-        WL "WARN: Import-Module OSD timed out after 30 seconds." "WARN"
-    }
+    # --- C. Inject Autopilot Script for Audit Mode ---
+    Write-Host "  > Injecting Autopilot Script..." -ForegroundColor Cyan
+    $ScriptDest = "$OSDisk\Windows\Temp\AutopilotScript.ps1"
+    Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile $ScriptDest -UseBasicParsing
 
-    Remove-Job $job -Force -ErrorAction SilentlyContinue
-}
-catch {
-    WL "WARN: Import-Module OSD attempt failed: $($_.Exception.Message)" "WARN"
-}
+    # --- D. Configure Audit Mode Unattend ---
+    Write-Host "  > Configuring Boot to Audit Mode..." -ForegroundColor Cyan
+    
+    # We create a specific Unattend.xml that forces Audit Mode and runs your script
+    $UnattendContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+    <settings pass="oobeSystem">
+        <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <Reseal>
+                <Mode>Audit</Mode>
+            </Reseal>
+        </component>
+    </settings>
+    <settings pass="auditUser">
+        <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <RunSynchronous>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>1</Order>
+                    <Path>powershell.exe -ExecutionPolicy Bypass -File C:\Windows\Temp\AutopilotScript.ps1</Path>
+                    <Description>Run Custom Autopilot Script</Description>
+                </RunSynchronousCommand>
+            </RunSynchronous>
+        </component>
+    </settings>
+</unattend>
+"@
+    $UnattendPath = "$OSDisk\Windows\Panther\unattend.xml"
+    if (-not (Test-Path "$OSDisk\Windows\Panther")) { New-Item -Path "$OSDisk\Windows\Panther" -ItemType Directory -Force }
+    $UnattendContent | Out-File -FilePath $UnattendPath -Encoding UTF8 -Force
 
-# -------------------------
-# Your old behavior: enable Windows Update
-# -------------------------
-if (-not $Global:OSDCloud) { $Global:OSDCloud = [ordered]@{} }
-
-$Global:OSDCloud.WindowsUpdate = $true
-# Optional drivers via Windows Update:
-# $Global:OSDCloud.WindowsUpdateDrivers = $true
-
-WL "OSDCloud flag set: WindowsUpdate=$($Global:OSDCloud.WindowsUpdate)" "INFO"
-
-# -------------------------
-# KEY FIX: stage custom SetupComplete payload from USB -> local disk
-# (E:\OSDCloud\Scripts\SetupComplete -> C:\OSDCloud\Scripts\SetupComplete)
-# -------------------------
-if (Has-Command "Set-SetupCompleteOSDCloudUSB") {
-    WL "Running Set-SetupCompleteOSDCloudUSB to stage SetupComplete payload..." "INFO"
-    try {
-        Set-SetupCompleteOSDCloudUSB
-        WL "Set-SetupCompleteOSDCloudUSB completed." "INFO"
-    } catch {
-        WL "WARN: Set-SetupCompleteOSDCloudUSB failed: $($_.Exception.Message)" "WARN"
-    }
+    Write-Host ">>> Post-Processing Complete. You may now reboot." -ForegroundColor Green
+    # Optional: Automatically reboot
+    # Restart-Computer -Force
 } else {
-    WL "WARN: Set-SetupCompleteOSDCloudUSB command not found (OSD may not be loaded)." "WARN"
+    Write-Warning "OSDCloud did not complete or C:\ is not mounted. Post-processing skipped."
 }
-
-# -------------------------
-# Launch OSDCloud GUI
-# -------------------------
-if (Has-Command "Start-OSDCloudGUI") {
-    WL "Launching OSDCloud GUI..." "INFO"
-    try {
-        Start-OSDCloudGUI
-        WL "Start-OSDCloudGUI returned (deployment likely completed or user exited)." "INFO"
-    } catch {
-        WL "ERROR: Start-OSDCloudGUI failed: $($_.Exception.Message)" "ERROR"
-        WL "=== WinPE StartURL END ===" "ERROR"
-        return
-    }
-} else {
-    WL "ERROR: Start-OSDCloudGUI command not found." "ERROR"
-    WL "=== WinPE StartURL END ===" "ERROR"
-    return
-}
-
-# -------------------------
-# OPTIONAL: post-deployment AutoPilot staging
-# If you do NOT want this, set $EnableAutopilotStaging = $false
-# -------------------------
-$EnableAutopilotStaging = $true
-
-if ($EnableAutopilotStaging) {
-
-    WL "Detecting deployed Windows volume (not assuming C:)..." "INFO"
-    $osDriveLetter = $null
-
-    try {
-        $drives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Name -ne 'X' }
-
-        foreach ($d in $drives) {
-            $path = "$($d.Name):\Windows\System32\config\SYSTEM"
-            if (Test-Path $path) { $osDriveLetter = $d.Name; break }
-        }
-    } catch {
-        WL "WARN: Error while scanning drives for OS volume: $($_.Exception.Message)" "WARN"
-    }
-
-    if (-not $osDriveLetter) {
-        WL "WARN: Could not find deployed Windows volume. Skipping AutoPilot staging." "WARN"
-    }
-    else {
-        $osRoot = "$osDriveLetter`:"
-        WL "Deployed Windows detected on drive: $osRoot" "INFO"
-
-        $AutoPilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/AutoPilotScript.ps1"
-        $TargetRoot         = Join-Path $osRoot "OSDCloud\AutoPilot"
-        $TargetScript       = Join-Path $TargetRoot "AutoPilotScript.ps1"
-
-        try {
-            WL "Staging AutoPilot script to: $TargetScript" "INFO"
-            New-Item -ItemType Directory -Path $TargetRoot -Force | Out-Null
-            Invoke-WebRequest -Uri $AutoPilotScriptUrl -OutFile $TargetScript -UseBasicParsing
-            WL "AutoPilot script downloaded successfully." "INFO"
-
-            # Create Public Desktop shortcut
-            $PublicDesktop = Join-Path $osRoot "Users\Public\Desktop"
-            New-Item -ItemType Directory -Path $PublicDesktop -Force | Out-Null
-
-            $ShortcutPath = Join-Path $PublicDesktop "Run AutoPilot Enrollment.lnk"
-            $WScriptShell = New-Object -ComObject WScript.Shell
-            $Shortcut     = $WScriptShell.CreateShortcut($ShortcutPath)
-            $Shortcut.TargetPath       = "powershell.exe"
-            $Shortcut.Arguments        = "-ExecutionPolicy Bypass -File `"$TargetScript`""
-            $Shortcut.WorkingDirectory = $TargetRoot
-            $Shortcut.WindowStyle      = 1
-            $Shortcut.IconLocation     = "%SystemRoot%\System32\shell32.dll,1"
-            $Shortcut.Save()
-
-            WL "AutoPilot shortcut created on Public Desktop." "INFO"
-        }
-        catch {
-            WL "WARN: Failed AutoPilot staging/shortcut: $($_.Exception.Message)" "WARN"
-        }
-    }
-}
-
-WL "Rebooting WinPE..." "INFO"
-wpeutil reboot
-
-WL "=== WinPE StartURL END ===" "INFO"
