@@ -1,122 +1,144 @@
 <#
 .SYNOPSIS
-    MASTER OSDCloud Launcher
-    - Feature: Downloads Wallpaper (Infrastructure)
-    - Feature: Disables Edge First-Run
-    - Feature: Launches Autopilot Script (Delay is now INSIDE the user script)
+    NYC Parks OSDCloud Wrapper (Audit Mode Edition)
+    1. Images via OSDCloud.
+    2. Injects Wallpaper Offline.
+    3. Configures "One-Time Admin AutoLogon" to bypass Session 0 limits.
+    4. Runs Autopilot Upload Interactively on first boot.
+    5. Reseals (Sysprep) back to OOBE automatically.
 #>
 
 # --- CONFIGURATION ---
 $WallpaperUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/NYCParksWallpaper.png"
-$AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/AutopilotScript.ps1"
-# ---------------------
+$LogFile = "X:\OSDCloud_Wrapper.log"
+Start-Transcript -Path $LogFile -Append
 
-Clear-Host
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "   STARTING OSDCLOUD MASTER SCRIPT" -ForegroundColor Cyan
-Write-Host "==========================================" -ForegroundColor Cyan
+# 1. RUN OSDCLOUD
+Write-Host ">>> STARTING OSDCLOUD GUI..." -ForegroundColor Cyan
+Start-OSDCloudGUI -NoReboot
 
-# 1. NETWORK & MODULES
-Write-Host ">>> [1/5] Checking System..." -ForegroundColor Yellow
-if (-not (Test-Connection "8.8.8.8" -Count 1 -Quiet)) {
-    Write-Warning "Network connection lost. Attempting to restore..."
-    cmd.exe /c "netsh interface ip set dns name='Ethernet' static 8.8.8.8"
-    Start-Sleep -Seconds 3
-}
+# 2. DETECT OFFLINE OS DRIVE
+Write-Host ">>> DETECTING WINDOWS PARTITION..." -ForegroundColor Cyan
+# Look for the volume containing the Windows folder
+$OSVolume = Get-Volume | Where-Object { Test-Path "$($_.DriveLetter):\Windows\explorer.exe" } | Select-Object -First 1
 
-if (-not (Get-Module -ListAvailable OSDCloud)) {
-    Install-Module OSD -Force -AllowClobber -Scope CurrentUser -ErrorAction Stop
-    Import-Module OSD -Force
-    Install-Module OSDCloud -Force -AllowClobber -Scope CurrentUser -ErrorAction SilentlyContinue
-} else {
-    Import-Module OSD -Force
-    Import-Module OSDCloud -Force
-}
-
-# 2. LAUNCH GUI
-Write-Host ">>> [2/5] Launching GUI..." -ForegroundColor Yellow
-try {
-    Start-OSDCloudGUI
-} catch {
-    Write-Error "CRITICAL: GUI Failed. $($_.Exception.Message)"
-    Pause
+if (-not $OSVolume) {
+    Write-Host "CRITICAL ERROR: Windows OS Drive not found!" -ForegroundColor Red
+    Start-Sleep 20
     Exit
 }
 
-# 3. POST-PROCESSING PREP
-Write-Host ">>> [3/5] Locating New OS..." -ForegroundColor Yellow
-$OSDisk = $null
-$Drives = Get-PSDrive -PSProvider FileSystem
-foreach ($Drive in $Drives) {
-    if (Test-Path "$($Drive.Root)Windows\System32\config\SOFTWARE") { $OSDisk = $Drive.Root; break }
+$DriveLetter = "$($OSVolume.DriveLetter):"
+Write-Host "OS Found on [$DriveLetter]" -ForegroundColor Green
+
+# 3. INJECT WALLPAPER (OFFLINE)
+Write-Host ">>> INJECTING WALLPAPER..." -ForegroundColor Cyan
+$TempWall = "$env:TEMP\NYCParksWallpaper.png"
+$TargetWallDir = "$DriveLetter\Windows\Web\Wallpaper\Windows"
+$TargetWallFile = "$TargetWallDir\img0.jpg"
+
+try {
+    # Download
+    Invoke-WebRequest -Uri $WallpaperUrl -OutFile $TempWall -UseBasicParsing
+    
+    # Overwrite
+    if (Test-Path $TempWall) {
+        Copy-Item -Path $TempWall -Destination $TargetWallFile -Force
+        
+        # Also hit the 4K folder for safety
+        if (Test-Path "$DriveLetter\Windows\Web\4K\Wallpaper\Windows") {
+            Copy-Item -Path $TempWall -Destination "$DriveLetter\Windows\Web\4K\Wallpaper\Windows\img0_3840x2160.jpg" -Force
+        }
+        
+        # Clear Cache (Important!)
+        Remove-Item "$DriveLetter\Users\*\AppData\Roaming\Microsoft\Windows\Themes\TranscodedWallpaper" -Force -ErrorAction SilentlyContinue
+        
+        Write-Host "Wallpaper injected." -ForegroundColor Green
+    }
+} catch {
+    Write-Host "Wallpaper Warning: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
-if ($OSDisk) {
-    Write-Host "    [OK] Windows found on $OSDisk" -ForegroundColor Green
+# 4. PREPARE AUTOPILOT SCRIPT (THE "AUDIT MODE" PAYLOAD)
+Write-Host ">>> STAGING AUTOPILOT SCRIPT..." -ForegroundColor Cyan
 
-    # 4. DOWNLOAD ASSETS
-    Write-Host ">>> [4/5] Downloading Assets..." -ForegroundColor Yellow
-    
-    if (-not (Test-Connection "github.com" -Count 1 -Quiet)) {
-        Get-NetAdapter | Where-Object Status -eq 'Up' | Restart-NetAdapter -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 10
-    }
+# We create the script that will run AFTER the reboot, inside the Admin desktop
+$PayloadDir = "$DriveLetter\Windows\Setup\Scripts"
+if (-not (Test-Path $PayloadDir)) { New-Item -Path $PayloadDir -ItemType Directory -Force | Out-Null }
 
-    # A. Wallpaper Download
-    $WallDest = "$OSDisk\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png"
-    try { 
-        Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallDest -UseBasicParsing -ErrorAction Stop
-        Write-Host "    [OK] Wallpaper Downloaded." -ForegroundColor Green
-    } catch { 
-        Write-Warning "    [!] Wallpaper Download Failed." 
-    }
+$FinalScriptPath = "C:\Windows\Setup\Scripts\Invoke-Autopilot-Audit.ps1"
 
-    # B. Autopilot Script Download
-    $HiddenDir = "$OSDisk\ProgramData\Autopilot"
-    if (-not (Test-Path $HiddenDir)) { New-Item -Path $HiddenDir -ItemType Directory -Force | Out-Null }
-    
-    try {
-        Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile "$HiddenDir\AutopilotScript.ps1" -UseBasicParsing -ErrorAction Stop
-        Write-Host "    [OK] Autopilot Script Downloaded." -ForegroundColor Green
-    } catch {
-        Write-Error "    [CRITICAL] Autopilot Script Download Failed!"
-        Pause
-    }
+# Note: We use backticks (`) to escape variables that should execute LATER, not NOW.
+$PSPayload = @"
+Start-Transcript -Path "C:\Windows\Temp\Autopilot_Audit_Log.txt"
 
-    # 5. REGISTRY CONFIGURATION
-    Write-Host ">>> [5/5] Injecting Configuration..." -ForegroundColor Yellow
-    
-    $SoftwareHive = "$OSDisk\Windows\System32\config\SOFTWARE"
-    if (Test-Path $SoftwareHive) {
-        reg load "HKLM\OFFLINE_SOFTWARE" $SoftwareHive | Out-Null
-        
-        # 1. Disable Edge Welcome Screen
-        $EdgePolicy = "HKLM:\OFFLINE_SOFTWARE\Policies\Microsoft\Edge"
-        if (-not (Test-Path $EdgePolicy)) { New-Item -Path $EdgePolicy -Force | Out-Null }
-        New-ItemProperty -Path $EdgePolicy -Name "HideFirstRunExperience" -Value 1 -PropertyType DWORD -Force | Out-Null
-        
-        # 2. Set Autopilot Script (Simple Launcher)
-        # We removed the delay here because it is now INSIDE the script itself.
-        $RunCmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Maximized -File `"C:\ProgramData\Autopilot\AutopilotScript.ps1`""
-        New-ItemProperty -Path "HKLM:\OFFLINE_SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -Name "SetupAutopilot" -Value $RunCmd -Force | Out-Null
-        
-        [gc]::Collect()
-        reg unload "HKLM\OFFLINE_SOFTWARE" | Out-Null
-        Write-Host "       [OK] Registry Configured." -ForegroundColor Green
-    }
-
-    # Audit Mode Unattend
-    $UnattendContent = '<?xml version="1.0" encoding="utf-8"?><unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"><settings pass="oobeSystem"><component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"><Reseal><Mode>Audit</Mode></Reseal></component></settings></unattend>'
-    $UnattendContent | Out-File -FilePath "$OSDisk\Windows\Panther\unattend.xml" -Encoding UTF8 -Force
-
-    Write-Host "==========================================" -ForegroundColor Green
-    Write-Host "   DEPLOYMENT SUCCESSFUL" -ForegroundColor Green
-    Write-Host "==========================================" -ForegroundColor Green
-    Write-Host "Rebooting in 10 seconds..."
-    Start-Sleep -Seconds 10
-    Restart-Computer -Force
-
-} else {
-    Write-Error "CRITICAL: New OS not detected."
-    Pause
+# A. Wait for Network
+Write-Host "Waiting for Network Connection..." -ForegroundColor Cyan
+`$MaxRetries = 100
+while (!(Test-Connection -ComputerName "google.com" -Count 1 -Quiet)) {
+    Write-Host "Waiting for internet..."
+    Start-Sleep -Seconds 3
+    `$RetryCount++
+    if (`$RetryCount -gt `$MaxRetries) { break }
 }
+
+# B. Install Autopilot Module
+Write-Host "Installing Autopilot Tools..." -ForegroundColor Cyan
+Set-ExecutionPolicy Bypass -Scope Process -Force
+Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force | Out-Null
+Install-Module -Name WindowsAutopilotIntune -Force -AllowClobber
+
+# C. Run Upload (INTERACTIVE PROMPT WILL NOW APPEAR!)
+Write-Host ">>> LAUNCHING AUTOPILOT UPLOAD <<<" -ForegroundColor Green
+Write-Host "Please sign in to the popup window." -ForegroundColor Yellow
+
+try {
+    Get-WindowsAutopilotInfo -Online -ErrorAction Stop
+} catch {
+    Write-Host "Autopilot Error (Or already registered): `$(`$_.Exception.Message)" -ForegroundColor Red
+    Start-Sleep -Seconds 5
+}
+
+# D. Cleanup & Reseal
+Write-Host ">>> DEPLOYMENT COMPLETE. RESEALING..." -ForegroundColor Green
+Write-Host "The PC will shutdown in 10 seconds."
+Start-Sleep -Seconds 10
+
+# Disable AutoLogon
+Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "AutoAdminLogon" -Force -ErrorAction SilentlyContinue
+
+# Sysprep back to OOBE and Shutdown
+& "C:\Windows\System32\Sysprep\sysprep.exe" /oobe /shutdown
+Stop-Transcript
+"@
+
+Set-Content -Path "$PayloadDir\Invoke-Autopilot-Audit.ps1" -Value $PSPayload
+
+# 5. CONFIGURE AUTO-LOGON (THE BRIDGE)
+# We use SetupComplete.cmd to configure the registry so the PC boots into Admin Desktop once.
+Write-Host ">>> CONFIGURING ADMIN AUTO-LOGON..." -ForegroundColor Cyan
+
+$SetupCompletePath = "$PayloadDir\SetupComplete.cmd"
+
+$CMDContent = @"
+@echo off
+:: 1. Enable Built-in Admin
+net user administrator /active:yes
+net user administrator ""
+
+:: 2. Configure AutoLogon in Registry
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 1 /f
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultUserName /t REG_SZ /d Administrator /f
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultPassword /t REG_SZ /d "" /f
+
+:: 3. Add Script to RunOnce (So it launches when Admin logs in)
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "RunAutopilot" /t REG_SZ /d "powershell.exe -WindowStyle Maximized -ExecutionPolicy Bypass -File $FinalScriptPath" /f
+"@
+
+Set-Content -Path $SetupCompletePath -Value $CMDContent
+
+# 6. REBOOT
+Stop-Transcript
+Write-Host ">>> DONE. REBOOTING INTO AUTOPILOT ENROLLMENT..." -ForegroundColor Green
+Start-Sleep -Seconds 5
+Restart-Computer -Force
