@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
     MASTER OSDCloud Launcher
-    - Method: REGISTRY INJECTION
-    - Fix: Creates 'Control Panel\Desktop' key if missing (Fixes your error)
+    - Feature: Downloads Wallpaper (Infrastructure)
     - Feature: Disables Edge First-Run
     - Feature: 30s Delay for Autopilot Script
+    - REMOVED: Offline Registry Injection (Fixes the crash)
 #>
 
 # --- CONFIGURATION ---
@@ -63,7 +63,7 @@ if ($OSDisk) {
         Start-Sleep -Seconds 10
     }
 
-    # A. Wallpaper Download
+    # A. Wallpaper Download (Just saves the file)
     $WallDest = "$OSDisk\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png"
     try { 
         Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallDest -UseBasicParsing -ErrorAction Stop
@@ -84,29 +84,9 @@ if ($OSDisk) {
         Pause
     }
 
-    # 5. REGISTRY CONFIGURATION
+    # 5. REGISTRY CONFIGURATION (Edge & Trigger Only)
     Write-Host ">>> [5/5] Injecting Configuration..." -ForegroundColor Yellow
     
-    # --- PART A: Force Wallpaper for ALL New Users (THE FIX) ---
-    $DefaultUserHive = "$OSDisk\Users\Default\NTUSER.DAT"
-    if (Test-Path $DefaultUserHive) {
-        reg load "HKU\OFFLINE_DEFAULT" $DefaultUserHive | Out-Null
-        
-        # FIX: Create the path structure if it doesn't exist
-        $DesktopKey = "HKU\OFFLINE_DEFAULT\Control Panel\Desktop"
-        if (-not (Test-Path $DesktopKey)) {
-            New-Item -Path $DesktopKey -Force | Out-Null
-        }
-
-        # Now safe to add the property
-        New-ItemProperty -Path $DesktopKey -Name "Wallpaper" -Value "C:\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png" -PropertyType String -Force | Out-Null
-        
-        [gc]::Collect()
-        reg unload "HKU\OFFLINE_DEFAULT" | Out-Null
-        Write-Host "       [OK] Wallpaper Baked In." -ForegroundColor Green
-    }
-
-    # --- PART B: Disable Edge First-Run & Set DELAYED Autopilot Trigger ---
     $SoftwareHive = "$OSDisk\Windows\System32\config\SOFTWARE"
     if (Test-Path $SoftwareHive) {
         reg load "HKLM\OFFLINE_SOFTWARE" $SoftwareHive | Out-Null
