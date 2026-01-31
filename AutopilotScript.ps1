@@ -1,3 +1,10 @@
+# Add this to the TOP of AutopilotScript.ps1
+$WallPath = "C:\Windows\Web\Wallpaper\Windows\CompanyWallpaper.jpg"
+if (Test-Path $WallPath) {
+    Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name wallpaper -Value $WallPath -Force
+    rundll32.exe user32.dll, UpdatePerUserSystemParameters
+}
+
 # send email to EnterpriseMobileDeviceManagement@oti.nyc.gov for support
  
 $global:clientId = "7ee59b78-92d6-45e0-a2d9-a530fecbd6d3"
