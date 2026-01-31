@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    All-in-One OSDCloud Deployment Script (Robust Mode)
-    - Verifies Internet Connection
-    - Forces Module Import
+    All-in-One OSDCloud Deployment Script (Fixed for StartOSDCloudGUI.ps1)
+    - Auto-detects OSDCloud Modules (Fixes GUI not launching)
     - Auto-detects Windows Drive
+    - Includes Wallpaper & Startup Script Logic
 #>
 
 # --- CONFIGURATION ---
@@ -19,14 +19,13 @@ if (-not (Test-Connection 8.8.8.8 -Count 1 -Quiet)) {
     Pause
 }
 
-# 2. LOAD MODULES (The Missing Piece)
+# 2. LOAD MODULES (Fixes 'Command Not Found')
 Write-Host ">>> Loading OSDCloud Modules..." -ForegroundColor Cyan
-
-# Try to import existing modules from the USB
+# We force import to ensure the 'Start-OSDCloudGUI' command is available
 Import-Module OSD -Force -ErrorAction SilentlyContinue
 Import-Module OSDCloud -Force -ErrorAction SilentlyContinue
 
-# Verify if the GUI command exists. If not, download it from the internet.
+# Emergency Check: If module is missing, download it.
 if (-not (Get-Command Start-OSDCloudGUI -ErrorAction SilentlyContinue)) {
     Write-Warning "OSDCloudGUI command not found. Attempting emergency download..."
     Install-Module OSD -Force -AllowClobber -Scope CurrentUser
@@ -108,7 +107,7 @@ if ($OSDisk) {
 "@
     $UnattendContent | Out-File -FilePath "$OSDisk\Windows\Panther\unattend.xml" -Encoding UTF8 -Force
 
-    # --- E. REBOOT PAUSE ---
+    # --- E. VERIFY & REBOOT ---
     Write-Host ">>> Imaging Complete!" -ForegroundColor Green
     Write-Host "If you see no red errors above, press Enter to reboot." -ForegroundColor Yellow
     Pause
