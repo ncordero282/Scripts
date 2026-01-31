@@ -1,5 +1,14 @@
 # send email to EnterpriseMobileDeviceManagement@oti.nyc.gov for support
 
+# --- 1. APPLY WALLPAPER (Runs Live) ---
+$WallPath = "C:\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png"
+if (Test-Path $WallPath) {
+    Write-Host "Applying Wallpaper..." -ForegroundColor Cyan
+    Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name wallpaper -Value $WallPath -Force
+    rundll32.exe user32.dll, UpdatePerUserSystemParameters
+}
+# --------------------------------------
+
 $global:clientId = "7ee59b78-92d6-45e0-a2d9-a530fecbd6d3"
 $global:authUrl = "https://login.microsoftonline.com/nyco365.onmicrosoft.com"
 $global:resource = "https://graph.microsoft.com/"
