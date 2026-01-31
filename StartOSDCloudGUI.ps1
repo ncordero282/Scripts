@@ -2,8 +2,9 @@
 .SYNOPSIS
     MASTER OSDCloud Launcher
     - Method: REGISTRY INJECTION
-    - Feature: Disables Edge First-Run Experience (Fixes delay)
-    - Feature: Downloads AND Applies Wallpaper (Without Autopilot script)
+    - Fix: Creates 'Control Panel\Desktop' key if missing (Fixes your error)
+    - Feature: Disables Edge First-Run
+    - Feature: 30s Delay for Autopilot Script
 #>
 
 # --- CONFIGURATION ---
@@ -83,27 +84,31 @@ if ($OSDisk) {
         Pause
     }
 
-    # 5. REGISTRY CONFIGURATION (The Magic Step)
+    # 5. REGISTRY CONFIGURATION
     Write-Host ">>> [5/5] Injecting Configuration..." -ForegroundColor Yellow
     
-    # --- PART A: Force Wallpaper for ALL New Users (The Fix) ---
+    # --- PART A: Force Wallpaper for ALL New Users (THE FIX) ---
     $DefaultUserHive = "$OSDisk\Users\Default\NTUSER.DAT"
     if (Test-Path $DefaultUserHive) {
-        Write-Host "    -> Baking in Wallpaper..."
         reg load "HKU\OFFLINE_DEFAULT" $DefaultUserHive | Out-Null
         
-        # This tells Windows: "Use this file as the wallpaper for everyone"
-        New-ItemProperty -Path "HKU\OFFLINE_DEFAULT\Control Panel\Desktop" -Name "Wallpaper" -Value "C:\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png" -PropertyType String -Force | Out-Null
+        # FIX: Create the path structure if it doesn't exist
+        $DesktopKey = "HKU\OFFLINE_DEFAULT\Control Panel\Desktop"
+        if (-not (Test-Path $DesktopKey)) {
+            New-Item -Path $DesktopKey -Force | Out-Null
+        }
+
+        # Now safe to add the property
+        New-ItemProperty -Path $DesktopKey -Name "Wallpaper" -Value "C:\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png" -PropertyType String -Force | Out-Null
         
         [gc]::Collect()
         reg unload "HKU\OFFLINE_DEFAULT" | Out-Null
-        Write-Host "       [OK] Wallpaper Set." -ForegroundColor Green
+        Write-Host "       [OK] Wallpaper Baked In." -ForegroundColor Green
     }
 
-    # --- PART B: Disable Edge First-Run & Set Autopilot Trigger ---
+    # --- PART B: Disable Edge First-Run & Set DELAYED Autopilot Trigger ---
     $SoftwareHive = "$OSDisk\Windows\System32\config\SOFTWARE"
     if (Test-Path $SoftwareHive) {
-        Write-Host "    -> Configuring Edge & Autopilot..."
         reg load "HKLM\OFFLINE_SOFTWARE" $SoftwareHive | Out-Null
         
         # 1. Disable Edge Welcome Screen
@@ -111,8 +116,8 @@ if ($OSDisk) {
         if (-not (Test-Path $EdgePolicy)) { New-Item -Path $EdgePolicy -Force | Out-Null }
         New-ItemProperty -Path $EdgePolicy -Name "HideFirstRunExperience" -Value 1 -PropertyType DWORD -Force | Out-Null
         
-        # 2. Set Autopilot Script to Run Once
-        $RunCmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Maximized -File `"C:\ProgramData\Autopilot\AutopilotScript.ps1`""
+        # 2. Set Autopilot Script (WITH 30 SECOND DELAY)
+        $RunCmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Maximized -Command `"Start-Sleep -Seconds 30; & 'C:\ProgramData\Autopilot\AutopilotScript.ps1'`""
         New-ItemProperty -Path "HKLM:\OFFLINE_SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -Name "SetupAutopilot" -Value $RunCmd -Force | Out-Null
         
         [gc]::Collect()
