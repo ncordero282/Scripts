@@ -1,5 +1,6 @@
 # Add this to the TOP of AutopilotScript.ps1
-$WallPath = "C:\Windows\Web\Wallpaper\Windows\CompanyWallpaper.png"
+# UPDATED: Correct filename 'NYCParkswallpaper.png'
+$WallPath = "C:\Windows\Web\Wallpaper\Windows\NYCParkswallpaper.png"
 if (Test-Path $WallPath) {
     Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name wallpaper -Value $WallPath -Force
     rundll32.exe user32.dll, UpdatePerUserSystemParameters
