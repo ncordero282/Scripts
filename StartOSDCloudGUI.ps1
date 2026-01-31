@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    NYC Parks OSDCloud Wrapper (Fixed & Robust)
-    1. Ensures Modules are loaded.
-    2. Runs OSDCloud GUI and WAITS for user confirmation.
+    NYC Parks OSDCloud Wrapper (Fixed)
+    1. Loads Modules.
+    2. Runs OSDCloud GUI (USER MUST UNCHECK REBOOT).
     3. Injects Wallpaper.
-    4. Injects Unattend.xml to force Audit Mode (Crucial Fix).
+    4. Injects Unattend.xml to force Audit Mode.
     5. Stages Autopilot Upload script for first boot.
 #>
 
@@ -23,18 +23,25 @@ Import-Module OSDCloud -Force
 Import-Module OSD -Force
 
 # 2. RUN OSDCLOUD
+Clear-Host
+Write-Host "=======================================================" -ForegroundColor Yellow
+Write-Host "                 INSTRUCTIONS" -ForegroundColor Yellow
+Write-Host "1. When the GUI opens, UNCHECK 'Reboot on Completion'." -ForegroundColor White
+Write-Host "2. Click START." -ForegroundColor White
+Write-Host "3. When imaging finishes, CLOSE THE GUI (Click X)." -ForegroundColor White
+Write-Host "   (The script will then continue to inject settings)" -ForegroundColor White
+Write-Host "=======================================================" -ForegroundColor Yellow
 Write-Host ">>> STARTING OSDCLOUD GUI..." -ForegroundColor Cyan
-Write-Warning "DO NOT CLOSE THE GUI MANUALLY. Let the imaging finish."
 
-# We run the GUI. If it crashes, the script will now pause below.
-Start-OSDCloudGUI -NoReboot
+# REMOVED -NoReboot (This was the cause of the error)
+Start-OSDCloudGUI
 
-# --- THE HUMAN GATE (Fixes 'Script ran too fast') ---
+# --- THE HUMAN GATE ---
 Write-Host "===================================================" -ForegroundColor Yellow
 Write-Host "   CHECKPOINT: Did the imaging complete successfully?" -ForegroundColor Yellow
+Write-Host "   (If the PC rebooted already, you forgot to uncheck the box!)" -ForegroundColor Yellow
 Write-Host "===================================================" -ForegroundColor Yellow
 Pause
-# -----------------------------------------------------------
 
 # 3. DETECT OFFLINE OS DRIVE
 Write-Host ">>> DETECTING WINDOWS PARTITION..." -ForegroundColor Cyan
@@ -42,6 +49,7 @@ $OSVolume = Get-Volume | Where-Object { Test-Path "$($_.DriveLetter):\Windows\ex
 
 if (-not $OSVolume) {
     Write-Host "CRITICAL ERROR: Windows OS Drive not found!" -ForegroundColor Red
+    Write-Host "The drive might not be mounted or imaging failed."
     Start-Sleep 20
     Exit
 }
@@ -62,12 +70,12 @@ try {
         # Copy to default lock screen path
         Copy-Item -Path $TempWall -Destination $TargetWallFile -Force
         
-        # Copy to 4K path (Fixes high-res screens showing blue default)
+        # Copy to 4K path
         if (Test-Path "$DriveLetter\Windows\Web\4K\Wallpaper\Windows") {
             Copy-Item -Path $TempWall -Destination "$DriveLetter\Windows\Web\4K\Wallpaper\Windows\img0_3840x2160.jpg" -Force
         }
         
-        # Nuke the cached wallpaper so Windows is forced to reload img0.jpg
+        # Clear Cache
         Remove-Item "$DriveLetter\Users\*\AppData\Roaming\Microsoft\Windows\Themes\TranscodedWallpaper" -Force -ErrorAction SilentlyContinue
         Write-Host "Wallpaper injected." -ForegroundColor Green
     }
@@ -75,8 +83,7 @@ try {
     Write-Host "Wallpaper Warning: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
-# 5. CONFIGURE AUDIT MODE (THE NATIVE WAY)
-# Instead of registry hacking, we give Windows an Unattend file that tells it to go to Audit Mode.
+# 5. CONFIGURE AUDIT MODE (UNATTEND.XML)
 Write-Host ">>> CONFIGURING UNATTEND.XML (AUDIT MODE)..." -ForegroundColor Cyan
 $UnattendContent = @"
 <?xml version="1.0" encoding="utf-8"?>
@@ -102,7 +109,7 @@ if (-not (Test-Path $PayloadDir)) { New-Item -Path $PayloadDir -ItemType Directo
 
 $FinalScriptPath = "C:\Windows\Setup\Scripts\Invoke-Autopilot-Audit.ps1"
 
-# We use a Here-String for the inner script
+# Note: We use the 'Smart Wait' logic here to ensure Windows is ready
 $PSPayload = @"
 Start-Transcript -Path "C:\Windows\Temp\Autopilot_Audit_Log.txt"
 
@@ -147,7 +154,6 @@ Stop-Transcript
 Set-Content -Path "$PayloadDir\Invoke-Autopilot-Audit.ps1" -Value $PSPayload
 
 # 7. SETUPCOMPLETE.CMD (THE TRIGGER)
-# In Audit Mode, Admin logs in automatically. We just need RunOnce to fire our script.
 Write-Host ">>> CONFIGURING RUNONCE TRIGGER..." -ForegroundColor Cyan
 
 $SetupCompletePath = "$PayloadDir\SetupComplete.cmd"
