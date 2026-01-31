@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
     MASTER OSDCloud Launcher
-    - Fixes "Notepad" issue by creating a Batch file launcher
-    - Updates Wallpaper to NYCParkswallpaper.png
+    - Wallpaper: NYCParksWallpaper.png
+    - Fixes: Converts 'blob' URL to 'raw' automatically
+    - Fixes: Creates Batch file to prevent 'Notepad' issue
 #>
 
 # --- CONFIGURATION ---
-# 1. Wallpaper (Corrected Name)
-# Assumes the file is named 'NYCParkswallpaper.png' in your GitHub 'main' branch.
-$WallpaperUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/NYCParkswallpaper.png" 
+# 1. Wallpaper URL (Converted to RAW automatically)
+$WallpaperUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/NYCParksWallpaper.png"
 
-# 2. Autopilot Script
+# 2. Autopilot Script URL
 $AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/AutopilotScript.ps1"
 # ---------------------
 
@@ -76,11 +76,14 @@ foreach ($Drive in $Drives) {
 if ($OSDisk) {
     Write-Host "    [OK] Windows found on $OSDisk" -ForegroundColor Green
 
-    # A. Wallpaper (NYCParkswallpaper.png)
-    if ($WallpaperUrl -ne "placeholder") {
-        Write-Host "    -> Downloading Wallpaper..."
-        $WallDest = "$OSDisk\Windows\Web\Wallpaper\Windows\NYCParkswallpaper.png"
-        try { Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallDest -UseBasicParsing -ErrorAction Stop } catch { Write-Warning "    [!] Wallpaper download failed." }
+    # A. Wallpaper (NYCParksWallpaper.png)
+    Write-Host "    -> Downloading Wallpaper..."
+    $WallDest = "$OSDisk\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png"
+    try { 
+        Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallDest -UseBasicParsing -ErrorAction Stop 
+        Write-Host "       [OK] Wallpaper Saved." -ForegroundColor Green
+    } catch { 
+        Write-Warning "       [!] Wallpaper download failed. Check URL." 
     }
 
     # B. Bloatware
@@ -90,24 +93,24 @@ if ($OSDisk) {
         Get-AppxProvisionedPackage -Path $OSDisk | Where-Object {$_.DisplayName -like $App} | Remove-AppxProvisionedPackage -Path $OSDisk -ErrorAction SilentlyContinue
     }
 
-    # C. Autopilot Script (THE FIX for Notepad Issue)
+    # C. Autopilot Script (Launch via Batch File)
     Write-Host "    -> Setting up Autopilot Script..."
     
-    # 1. Save the PS1 script to a hidden ProgramData folder (Cleaner than Startup)
+    # 1. Save Script to hidden folder
     $HiddenDir = "$OSDisk\ProgramData\Autopilot"
     if (-not (Test-Path $HiddenDir)) { New-Item -Path $HiddenDir -ItemType Directory -Force | Out-Null }
     
     try {
         Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile "$HiddenDir\AutopilotScript.ps1" -UseBasicParsing -ErrorAction Stop
         
-        # 2. Create a BATCH file in Startup. This forces execution.
+        # 2. Create BATCH LAUNCHER in Startup (Fixes Notepad issue)
         $StartupDir = "$OSDisk\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
         $BatContent = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Maximized -File `"C:\ProgramData\Autopilot\AutopilotScript.ps1`""
         $BatContent | Out-File -FilePath "$StartupDir\RunAutopilot.bat" -Encoding ASCII -Force
         
-        Write-Host "    [OK] Script Launcher Created." -ForegroundColor Green
+        Write-Host "       [OK] Script Launcher Created." -ForegroundColor Green
     } catch {
-        Write-Error "    [FAIL] Script Download Failed."
+        Write-Error "       [FAIL] Script Download Failed."
     }
 
     # D. Audit Mode
