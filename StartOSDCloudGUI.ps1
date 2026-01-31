@@ -1,7 +1,9 @@
 <#
 .SYNOPSIS
-    All-in-One OSDCloud Deployment Script
-    Updates: Extended Bloatware List (Xbox/Teams/Outlook) & Fixed Startup Logic
+    All-in-One OSDCloud Deployment Script (Robust Mode)
+    - Verifies Internet Connection
+    - Forces Module Import
+    - Auto-detects Windows Drive
 #>
 
 # --- CONFIGURATION ---
@@ -9,57 +11,85 @@ $WallpaperUrl = "https://your-url-here.com/wallpaper.jpg"
 $AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/refs/heads/main/AutopilotScript.ps1"
 # ---------------------
 
-# 1. SELF-HEALING: Fix OSD Module & Drivers
-Write-Host ">>> verifying OSDCloud Modules..." -ForegroundColor Cyan
-if (Get-Module OSD) { Remove-Module OSD -Force -ErrorAction SilentlyContinue }
-Install-Module OSD -Force -AllowClobber -Scope CurrentUser
-Import-Module OSD -Force
+# 1. VERIFY INTERNET (Crucial Check)
+Write-Host ">>> Checking Internet Connection..." -ForegroundColor Cyan
+if (-not (Test-Connection 8.8.8.8 -Count 1 -Quiet)) {
+    Write-Warning "No Internet Connection detected! OSDCloud requires Internet."
+    Write-Host "Please check your network cable."
+    Pause
+}
 
-# 2. LAUNCH THE GUI
+# 2. LOAD MODULES (The Missing Piece)
+Write-Host ">>> Loading OSDCloud Modules..." -ForegroundColor Cyan
+
+# Try to import existing modules from the USB
+Import-Module OSD -Force -ErrorAction SilentlyContinue
+Import-Module OSDCloud -Force -ErrorAction SilentlyContinue
+
+# Verify if the GUI command exists. If not, download it from the internet.
+if (-not (Get-Command Start-OSDCloudGUI -ErrorAction SilentlyContinue)) {
+    Write-Warning "OSDCloudGUI command not found. Attempting emergency download..."
+    Install-Module OSD -Force -AllowClobber -Scope CurrentUser
+    Import-Module OSD -Force
+}
+
+# 3. LAUNCH THE GUI
 Write-Host ">>> Launching OSDCloud GUI..." -ForegroundColor Cyan
-Write-Warning "IMPORTANT: Do NOT check 'Restart' in the GUI."
-Start-OSDCloudGUI
+try {
+    Start-OSDCloudGUI
+} catch {
+    Write-Error "CRITICAL ERROR: Failed to launch GUI."
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host "Press Enter to exit..."
+    Pause
+    exit
+}
 
-# 3. POST-PROCESSING (Runs immediately after you close the GUI)
-$OSDisk = "C:\" 
+# 4. POST-PROCESSING (Runs after GUI closes)
+Write-Host ">>> Detecting Windows Drive..." -ForegroundColor Cyan
+$OSDisk = $null
+$Drives = Get-PSDrive -PSProvider FileSystem
+foreach ($Drive in $Drives) {
+    if (Test-Path "$($Drive.Root)Windows\System32\Config") {
+        $OSDisk = $Drive.Root
+        break
+    }
+}
 
-if (Test-Path "$OSDisk\Windows\System32") {
-    Write-Host ">>> OS Detected. Starting Customizations..." -ForegroundColor Green
+if ($OSDisk) {
+    Write-Host ">>> OS Detected on $OSDisk. Starting Customizations..." -ForegroundColor Green
 
-    # --- A. Wallpaper (Download Only) ---
-    # NOTE: The AutopilotScript must apply this via Registry!
+    # --- A. Wallpaper ---
     Write-Host "  > Downloading Wallpaper..." -ForegroundColor Cyan
     $WallPath = "$OSDisk\Windows\Web\Wallpaper\Windows\CompanyWallpaper.jpg"
-    Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallPath -UseBasicParsing
+    try {
+        Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallPath -UseBasicParsing -ErrorAction Stop
+    } catch {
+        Write-Warning "    [!] Failed to download Wallpaper."
+    }
 
-    # --- B. Remove Bloatware (UPDATED LIST) ---
+    # --- B. Remove Bloatware ---
     Write-Host "  > Removing Bloatware..." -ForegroundColor Cyan
-    # Added: Xbox, Teams, Outlook, ToDo based on your screenshots
     $Bloatware = @(
         "*BingWeather*","*GetHelp*","*GetStarted*","*Microsoft3DViewer*",
-        "*Solitaire*","*OfficeHub*",
+        "*Solitaire*","*OfficeHub*","*MixedReality*","*OneNote*",
         "*People*","*Skype*","*YourPhone*","*Zune*",
-        "*Xbox*","*Outlook*","*Teams*"
+        "*Xbox*","*GamingApp*","*Outlook*","*Teams*","*Todo*","*Todos*","*PowerAutomate*","*Copilot*"
     )
     foreach ($App in $Bloatware) {
-        Write-Host "    Removing: $App" -ForegroundColor DarkGray
+        Write-Host "    Scanning for: $App" -ForegroundColor DarkGray
         Get-AppxProvisionedPackage -Path $OSDisk | Where-Object {$_.DisplayName -like $App} | Remove-AppxProvisionedPackage -Path $OSDisk -ErrorAction SilentlyContinue
     }
 
-    # --- C. Inject Autopilot Script (Startup Persistence) ---
-    # We use ProgramData so it runs for ANY user (including Audit Admin)
-    Write-Host "  > Injecting Autopilot Script to Startup..." -ForegroundColor Cyan
+    # --- C. Inject Autopilot Script ---
+    Write-Host "  > Injecting Autopilot Script..." -ForegroundColor Cyan
     $StartupDir = "$OSDisk\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
     if (-not (Test-Path $StartupDir)) { New-Item -Path $StartupDir -ItemType Directory -Force }
-    
-    # Download the script directly to the startup folder
-    Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile "$StartupDir\AutopilotScript.ps1" -UseBasicParsing
-    
-    # VERIFICATION: Check if file exists
-    if (Test-Path "$StartupDir\AutopilotScript.ps1") {
-        Write-Host "    [OK] Script injected successfully." -ForegroundColor Green
-    } else {
-        Write-Error "    [FAIL] Script download failed!"
+    try {
+        Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile "$StartupDir\AutopilotScript.ps1" -UseBasicParsing -ErrorAction Stop
+        Write-Host "    [OK] Script injected." -ForegroundColor Green
+    } catch {
+        Write-Error "    [FAIL] Could not download Autopilot Script!"
     }
 
     # --- D. Force Audit Mode ---
@@ -78,10 +108,12 @@ if (Test-Path "$OSDisk\Windows\System32") {
 "@
     $UnattendContent | Out-File -FilePath "$OSDisk\Windows\Panther\unattend.xml" -Encoding UTF8 -Force
 
-    # --- E. REBOOT ---
-    Write-Host ">>> Imaging Complete! Rebooting in 5 seconds..." -ForegroundColor Green
-    Start-Sleep -Seconds 5
+    # --- E. REBOOT PAUSE ---
+    Write-Host ">>> Imaging Complete!" -ForegroundColor Green
+    Write-Host "If you see no red errors above, press Enter to reboot." -ForegroundColor Yellow
+    Pause
     Restart-Computer -Force
 } else {
-    Write-Warning "OSDCloud GUI closed but no OS was found on C:\. Skipping post-processing."
+    Write-Error "CRITICAL: Could not find Windows installation!"
+    Pause
 }
