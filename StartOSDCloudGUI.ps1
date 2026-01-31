@@ -3,8 +3,7 @@
     MASTER OSDCloud Launcher
     - Feature: Downloads Wallpaper (Infrastructure)
     - Feature: Disables Edge First-Run
-    - Feature: 30s Delay for Autopilot Script
-    - REMOVED: Offline Registry Injection (Fixes the crash)
+    - Feature: Launches Autopilot Script (Delay is now INSIDE the user script)
 #>
 
 # --- CONFIGURATION ---
@@ -63,7 +62,7 @@ if ($OSDisk) {
         Start-Sleep -Seconds 10
     }
 
-    # A. Wallpaper Download (Just saves the file)
+    # A. Wallpaper Download
     $WallDest = "$OSDisk\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png"
     try { 
         Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallDest -UseBasicParsing -ErrorAction Stop
@@ -84,7 +83,7 @@ if ($OSDisk) {
         Pause
     }
 
-    # 5. REGISTRY CONFIGURATION (Edge & Trigger Only)
+    # 5. REGISTRY CONFIGURATION
     Write-Host ">>> [5/5] Injecting Configuration..." -ForegroundColor Yellow
     
     $SoftwareHive = "$OSDisk\Windows\System32\config\SOFTWARE"
@@ -96,8 +95,9 @@ if ($OSDisk) {
         if (-not (Test-Path $EdgePolicy)) { New-Item -Path $EdgePolicy -Force | Out-Null }
         New-ItemProperty -Path $EdgePolicy -Name "HideFirstRunExperience" -Value 1 -PropertyType DWORD -Force | Out-Null
         
-        # 2. Set Autopilot Script (WITH 30 SECOND DELAY)
-        $RunCmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Maximized -Command `"Start-Sleep -Seconds 30; & 'C:\ProgramData\Autopilot\AutopilotScript.ps1'`""
+        # 2. Set Autopilot Script (Simple Launcher)
+        # We removed the delay here because it is now INSIDE the script itself.
+        $RunCmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Maximized -File `"C:\ProgramData\Autopilot\AutopilotScript.ps1`""
         New-ItemProperty -Path "HKLM:\OFFLINE_SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -Name "SetupAutopilot" -Value $RunCmd -Force | Out-Null
         
         [gc]::Collect()
