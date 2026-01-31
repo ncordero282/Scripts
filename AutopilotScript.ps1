@@ -1,14 +1,17 @@
-# send email to EnterpriseMobileDeviceManagement@oti.nyc.gov for support
+# --- 1. START-UP DELAY (The Fix) ---
+Write-Host "Waiting for Windows to stabilize..." -ForegroundColor Yellow
+Start-Sleep -Seconds 30
+# -----------------------------------
 
-# --- 1. APPLY WALLPAPER (Runs Live) ---
+# --- 2. APPLY WALLPAPER (Runs Live) ---
 $WallPath = "C:\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png"
 if (Test-Path $WallPath) {
     Write-Host "Applying Wallpaper..." -ForegroundColor Cyan
     Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name wallpaper -Value $WallPath -Force
     rundll32.exe user32.dll, UpdatePerUserSystemParameters
 }
-# --------------------------------------
 
+# --- 3. AUTOPILOT LOGIC ---
 $global:clientId = "7ee59b78-92d6-45e0-a2d9-a530fecbd6d3"
 $global:authUrl = "https://login.microsoftonline.com/nyco365.onmicrosoft.com"
 $global:resource = "https://graph.microsoft.com/"
@@ -29,7 +32,7 @@ function Request-DeviceCode {
         $global:Devicecode = $DevicecodeResponse
         Write-Host "From your managed device, " $DevicecodeResponse.message
 
-        # Open Edge in InPrivate mode (Extra safety against Setup Screens)
+        # Open Edge in InPrivate mode
         Start-Process "msedge.exe" -ArgumentList "https://microsoft.com/devicelogin --inprivate"
 
         # Prompt the user to enter the code at the opened URL
