@@ -1,17 +1,52 @@
-# --- 1. START-UP DELAY (The Fix) ---
-Write-Host "Waiting for Windows to stabilize..." -ForegroundColor Yellow
-Start-Sleep -Seconds 30
-# -----------------------------------
+# send email to EnterpriseMobileDeviceManagement@oti.nyc.gov for support
 
-# --- 2. APPLY WALLPAPER (Runs Live) ---
+# --- PHASE 1: SMART WAIT (The Fix) ---
+Write-Host "Initializing Setup..." -ForegroundColor Yellow
+
+# 1. Wait for Internet (Keeps checking until connected)
+Write-Host "   -> Waiting for Network..." -NoNewline
+while (-not (Test-Connection "8.8.8.8" -Count 1 -Quiet)) { 
+    Write-Host "." -NoNewline
+    Start-Sleep -Seconds 2 
+}
+Write-Host " [Connected]" -ForegroundColor Green
+
+# 2. Wait for Desktop Shell (Ensures Windows is fully loaded)
+Write-Host "   -> Waiting for Desktop..." -NoNewline
+while (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { 
+    Write-Host "." -NoNewline
+    Start-Sleep -Seconds 2 
+}
+Write-Host " [Ready]" -ForegroundColor Green
+
+# 3. Extra "Settling" Time (Gives background services a moment)
+Start-Sleep -Seconds 5
+# -------------------------------------
+
+# --- PHASE 2: WALLPAPER LOGIC ---
 $WallPath = "C:\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png"
+$WallUrl  = "https://raw.githubusercontent.com/ncordero282/Scripts/main/NYCParksWallpaper.png"
+
+# Safety Net: Download if missing
+if (-not (Test-Path $WallPath)) {
+    Write-Host "Wallpaper missing. Downloading..." -ForegroundColor Yellow
+    try { 
+        Invoke-WebRequest -Uri $WallUrl -OutFile $WallPath -UseBasicParsing -ErrorAction Stop 
+        Write-Host "Download Complete." -ForegroundColor Green
+    } catch {
+        Write-Warning "Could not download wallpaper."
+    }
+}
+
+# Apply Wallpaper
 if (Test-Path $WallPath) {
     Write-Host "Applying Wallpaper..." -ForegroundColor Cyan
     Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name wallpaper -Value $WallPath -Force
     rundll32.exe user32.dll, UpdatePerUserSystemParameters
 }
+# --------------------------------
 
-# --- 3. AUTOPILOT LOGIC ---
+# --- PHASE 3: AUTOPILOT ---
 $global:clientId = "7ee59b78-92d6-45e0-a2d9-a530fecbd6d3"
 $global:authUrl = "https://login.microsoftonline.com/nyco365.onmicrosoft.com"
 $global:resource = "https://graph.microsoft.com/"
@@ -39,7 +74,7 @@ function Request-DeviceCode {
         Write-Host "Please enter the code at the opened URL: $($DevicecodeResponse.user_code)"
         Read-Host "Press Enter after you have entered the code to continue..."
     } catch {
-        Write-Error "Failed to request device code. Check internet connection."
+        Write-Error "Failed to request device code."
     }
 }
 
@@ -49,7 +84,7 @@ function Get-Token {
         $tokenResponse = Invoke-RestMethod -Method POST -Uri "$global:authUrl/oauth2/token" -Body $tokenParams
         $global:Token = $tokenResponse
     } catch {
-        Write-Host "Failed to obtain token. Please check your network connection or credentials."
+        Write-Host "Failed to obtain token. Check connection."
         return
     }
 }
@@ -95,7 +130,7 @@ function SendTo-Autopilot {
         Start-Sleep -Seconds 3
         Write-Host "Email will be sent in a few minutes to your email address." 
     } catch {
-        Write-Host "Failed to send data to Autopilot. Please check your network connection or try again later."
+        Write-Host "Failed to send data to Autopilot."
     }
 }
 
