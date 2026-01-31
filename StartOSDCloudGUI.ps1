@@ -1,139 +1,87 @@
 <#
 .SYNOPSIS
-    Master OSDCloud Deployment Script (Network Wait Version)
-    - Waits for DHCP assignment (Fixes "IP not yet assigned" error)
-    - Auto-Repairs DNS
-    - Launches GUI safely
+    All-in-One OSDCloud Deployment Script
+    Updates: Extended Bloatware List (Xbox/Teams/Outlook) & Fixed Startup Logic
 #>
 
 # --- CONFIGURATION ---
 $WallpaperUrl = "https://your-url-here.com/wallpaper.jpg" 
-$AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/AutopilotScript.ps1"
+$AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/refs/heads/main/AutopilotScript.ps1"
 # ---------------------
 
-# ==========================================
-# PHASE 1: WAIT FOR IP ADDRESS (The Fix)
-# ==========================================
-Write-Host ">>> Phase 1: Waiting for Network..." -ForegroundColor Cyan
+# 1. SELF-HEALING: Fix OSD Module & Drivers
+Write-Host ">>> verifying OSDCloud Modules..." -ForegroundColor Cyan
+if (Get-Module OSD) { Remove-Module OSD -Force -ErrorAction SilentlyContinue }
+Install-Module OSD -Force -AllowClobber -Scope CurrentUser
+Import-Module OSD -Force
 
-$MaxRetries = 60
-$RetryCount = 0
-$IP = $null
+# 2. LAUNCH THE GUI
+Write-Host ">>> Launching OSDCloud GUI..." -ForegroundColor Cyan
+Write-Warning "IMPORTANT: Do NOT check 'Restart' in the GUI."
+Start-OSDCloudGUI
 
-# Keep looping until we find a valid IPv4 address (ignoring 169.254 self-assigned IPs)
-while (-not $IP -and $RetryCount -lt $MaxRetries) {
-    $IP = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike "169.254*" -and $_.IPAddress -notlike "127.0.0.1" }
-    
-    if (-not $IP) {
-        Write-Host "  Waiting for DHCP... ($RetryCount / $MaxRetries)" -NoNewline -ForegroundColor Yellow
-        Start-Sleep -Seconds 1
-        Write-Host "`r" -NoNewline # Overwrite line for cleanliness
-        $RetryCount++
-    }
-}
+# 3. POST-PROCESSING (Runs immediately after you close the GUI)
+$OSDisk = "C:\" 
 
-if ($IP) {
-    Write-Host "`n  [OK] IP Address Assigned: $($IP.IPAddress)" -ForegroundColor Green
-} else {
-    Write-Error "`nCRITICAL: DHCP Timed Out! No IP Address received."
-    Write-Host "Please check your ethernet cable."
-    Pause
-    exit
-}
+if (Test-Path "$OSDisk\Windows\System32") {
+    Write-Host ">>> OS Detected. Starting Customizations..." -ForegroundColor Green
 
-# ==========================================
-# PHASE 2: VERIFY & FIX DNS
-# ==========================================
-Write-Host ">>> Phase 2: Verifying Internet Access..." -ForegroundColor Cyan
+    # --- A. Wallpaper (Download Only) ---
+    # NOTE: The AutopilotScript must apply this via Registry!
+    Write-Host "  > Downloading Wallpaper..." -ForegroundColor Cyan
+    $WallPath = "$OSDisk\Windows\Web\Wallpaper\Windows\CompanyWallpaper.jpg"
+    Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallPath -UseBasicParsing
 
-try {
-    # Try to resolve GitHub. If it fails, we force Google DNS.
-    $null = [System.Net.Dns]::GetHostEntry("github.com")
-    Write-Host "  [OK] DNS is working." -ForegroundColor Green
-} catch {
-    Write-Warning "  [!] DNS Resolution failed. Forcing Google DNS (8.8.8.8)..."
-    Get-NetAdapter | Where-Object Status -eq 'Up' | Set-DnsClientServerAddress -ServerAddresses 8.8.8.8
-    Start-Sleep -Seconds 2
-}
-
-# Final Ping Check
-if (-not (Test-Connection "github.com" -Count 1 -Quiet)) {
-    Write-Error "CRITICAL: Connected to network but cannot reach Internet."
-    Pause
-}
-
-# ==========================================
-# PHASE 3: LOAD MODULES & LAUNCH GUI
-# ==========================================
-Write-Host ">>> Phase 3: Launching OSDCloud GUI..." -ForegroundColor Cyan
-
-# 1. Load Modules
-Import-Module OSD -Force -ErrorAction SilentlyContinue
-Import-Module OSDCloud -Force -ErrorAction SilentlyContinue
-
-# 2. Emergency Download if Module is missing
-if (-not (Get-Command Start-OSDCloudGUI -ErrorAction SilentlyContinue)) {
-    Write-Warning "Modules missing. Downloading..."
-    Install-Module OSD -Force -AllowClobber -Scope CurrentUser
-    Import-Module OSD -Force
-}
-
-# 3. Start GUI
-try {
-    Start-OSDCloudGUI
-} catch {
-    Write-Error "Failed to launch GUI: $($_.Exception.Message)"
-    Pause
-    exit
-}
-
-# ==========================================
-# PHASE 4: POST-PROCESSING (Runs after GUI)
-# ==========================================
-Write-Host ">>> Phase 4: Customizations..." -ForegroundColor Cyan
-
-# Find Windows Drive
-$OSDisk = $null
-$Drives = Get-PSDrive -PSProvider FileSystem
-foreach ($Drive in $Drives) {
-    if (Test-Path "$($Drive.Root)Windows\System32\Config") {
-        $OSDisk = $Drive.Root
-        break
-    }
-}
-
-if ($OSDisk) {
-    Write-Host "  > OS Detected on $OSDisk" -ForegroundColor Green
-
-    # --- A. Wallpaper ---
-    if ($WallpaperUrl -and $WallpaperUrl -ne "https://your-url-here.com/wallpaper.jpg") {
-        $WallPath = "$OSDisk\Windows\Web\Wallpaper\Windows\CompanyWallpaper.jpg"
-        try { Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallPath -UseBasicParsing -ErrorAction Stop } catch {}
-    }
-
-    # --- B. Remove Bloatware ---
+    # --- B. Remove Bloatware (UPDATED LIST) ---
     Write-Host "  > Removing Bloatware..." -ForegroundColor Cyan
-    $Bloatware = @("*BingWeather*","*GetHelp*","*GetStarted*","*Microsoft3DViewer*","*Solitaire*","*OfficeHub*","*MixedReality*","*OneNote*","*People*","*Skype*","*YourPhone*","*Zune*","*Xbox*","*GamingApp*","*Outlook*","*Teams*","*Todo*","*Todos*","*PowerAutomate*","*Copilot*")
+    # Added: Xbox, Teams, Outlook, ToDo based on your screenshots
+    $Bloatware = @(
+        "*BingWeather*","*GetHelp*","*GetStarted*","*Microsoft3DViewer*",
+        "*Solitaire*","*OfficeHub*","*MixedReality*","*OneNote*",
+        "*People*","*Skype*","*YourPhone*","*Zune*",
+        "*Xbox*","*Outlook*","*Teams*","*ToDo*","*PowerAutomate*","*Copilot*"
+    )
     foreach ($App in $Bloatware) {
+        Write-Host "    Removing: $App" -ForegroundColor DarkGray
         Get-AppxProvisionedPackage -Path $OSDisk | Where-Object {$_.DisplayName -like $App} | Remove-AppxProvisionedPackage -Path $OSDisk -ErrorAction SilentlyContinue
     }
 
-    # --- C. Inject Autopilot Script ---
-    Write-Host "  > Injecting Autopilot Script..." -ForegroundColor Cyan
+    # --- C. Inject Autopilot Script (Startup Persistence) ---
+    # We use ProgramData so it runs for ANY user (including Audit Admin)
+    Write-Host "  > Injecting Autopilot Script to Startup..." -ForegroundColor Cyan
     $StartupDir = "$OSDisk\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
     if (-not (Test-Path $StartupDir)) { New-Item -Path $StartupDir -ItemType Directory -Force }
-    try { Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile "$StartupDir\AutopilotScript.ps1" -UseBasicParsing -ErrorAction Stop } catch { Write-Warning "Script Download Failed" }
+    
+    # Download the script directly to the startup folder
+    Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile "$StartupDir\AutopilotScript.ps1" -UseBasicParsing
+    
+    # VERIFICATION: Check if file exists
+    if (Test-Path "$StartupDir\AutopilotScript.ps1") {
+        Write-Host "    [OK] Script injected successfully." -ForegroundColor Green
+    } else {
+        Write-Error "    [FAIL] Script download failed!"
+    }
 
     # --- D. Force Audit Mode ---
-    Write-Host "  > Setting Audit Mode..." -ForegroundColor Cyan
-    $UnattendContent = '<?xml version="1.0" encoding="utf-8"?><unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"><settings pass="oobeSystem"><component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"><Reseal><Mode>Audit</Mode></Reseal></component></settings></unattend>'
+    Write-Host "  > Configuring Audit Mode..." -ForegroundColor Cyan
+    $UnattendContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+    <settings pass="oobeSystem">
+        <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <Reseal>
+                <Mode>Audit</Mode>
+            </Reseal>
+        </component>
+    </settings>
+</unattend>
+"@
     $UnattendContent | Out-File -FilePath "$OSDisk\Windows\Panther\unattend.xml" -Encoding UTF8 -Force
 
     # --- E. REBOOT ---
-    Write-Host ">>> COMPLETE! Rebooting in 5 seconds..." -ForegroundColor Green
+    Write-Host ">>> Imaging Complete! Rebooting in 5 seconds..." -ForegroundColor Green
     Start-Sleep -Seconds 5
     Restart-Computer -Force
 } else {
-    Write-Error "CRITICAL: No Windows OS found on C: through Z:"
-    Pause
+    Write-Warning "OSDCloud GUI closed but no OS was found on C:\. Skipping post-processing."
 }
