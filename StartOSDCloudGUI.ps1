@@ -1,8 +1,9 @@
 <#
 .SYNOPSIS
     MASTER OSDCloud Launcher
-    - Method: REGISTRY INJECTION (Fixes "Script didn't run")
-    - Wallpaper: "Baked In" via Default User Registry (No script needed later)
+    - Method: REGISTRY INJECTION
+    - Feature: Disables Edge First-Run Experience (Fixes delay)
+    - Feature: Downloads AND Applies Wallpaper (Without Autopilot script)
 #>
 
 # --- CONFIGURATION ---
@@ -56,23 +57,21 @@ if ($OSDisk) {
     # 4. DOWNLOAD ASSETS
     Write-Host ">>> [4/5] Downloading Assets..." -ForegroundColor Yellow
     
-    # Verify Network Again
     if (-not (Test-Connection "github.com" -Count 1 -Quiet)) {
-        Write-Warning "    [!] Network dropped. Re-initializing..."
         Get-NetAdapter | Where-Object Status -eq 'Up' | Restart-NetAdapter -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 10
     }
 
-    # A. Wallpaper (Download Only)
+    # A. Wallpaper Download
     $WallDest = "$OSDisk\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png"
     try { 
         Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallDest -UseBasicParsing -ErrorAction Stop
         Write-Host "    [OK] Wallpaper Downloaded." -ForegroundColor Green
     } catch { 
-        Write-Warning "    [!] Wallpaper Download Failed. (Check URL/Network)" 
+        Write-Warning "    [!] Wallpaper Download Failed." 
     }
 
-    # B. Autopilot Script (Download Only)
+    # B. Autopilot Script Download
     $HiddenDir = "$OSDisk\ProgramData\Autopilot"
     if (-not (Test-Path $HiddenDir)) { New-Item -Path $HiddenDir -ItemType Directory -Force | Out-Null }
     
@@ -84,36 +83,41 @@ if ($OSDisk) {
         Pause
     }
 
-    # 5. REGISTRY MAGIC (The Separation Fix)
+    # 5. REGISTRY CONFIGURATION (The Magic Step)
     Write-Host ">>> [5/5] Injecting Configuration..." -ForegroundColor Yellow
     
-    # --- PART A: Set Wallpaper for Default User (So it applies automatically) ---
+    # --- PART A: Force Wallpaper for ALL New Users (The Fix) ---
     $DefaultUserHive = "$OSDisk\Users\Default\NTUSER.DAT"
     if (Test-Path $DefaultUserHive) {
         Write-Host "    -> Baking in Wallpaper..."
         reg load "HKU\OFFLINE_DEFAULT" $DefaultUserHive | Out-Null
         
-        # Set the wallpaper path in the registry
+        # This tells Windows: "Use this file as the wallpaper for everyone"
         New-ItemProperty -Path "HKU\OFFLINE_DEFAULT\Control Panel\Desktop" -Name "Wallpaper" -Value "C:\Windows\Web\Wallpaper\Windows\NYCParksWallpaper.png" -PropertyType String -Force | Out-Null
         
-        # Unload the hive
         [gc]::Collect()
         reg unload "HKU\OFFLINE_DEFAULT" | Out-Null
         Write-Host "       [OK] Wallpaper Set." -ForegroundColor Green
     }
 
-    # --- PART B: Set RunOnce for Autopilot Script ---
+    # --- PART B: Disable Edge First-Run & Set Autopilot Trigger ---
     $SoftwareHive = "$OSDisk\Windows\System32\config\SOFTWARE"
     if (Test-Path $SoftwareHive) {
-        Write-Host "    -> Setting Autopilot Trigger..."
+        Write-Host "    -> Configuring Edge & Autopilot..."
         reg load "HKLM\OFFLINE_SOFTWARE" $SoftwareHive | Out-Null
         
+        # 1. Disable Edge Welcome Screen
+        $EdgePolicy = "HKLM:\OFFLINE_SOFTWARE\Policies\Microsoft\Edge"
+        if (-not (Test-Path $EdgePolicy)) { New-Item -Path $EdgePolicy -Force | Out-Null }
+        New-ItemProperty -Path $EdgePolicy -Name "HideFirstRunExperience" -Value 1 -PropertyType DWORD -Force | Out-Null
+        
+        # 2. Set Autopilot Script to Run Once
         $RunCmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Maximized -File `"C:\ProgramData\Autopilot\AutopilotScript.ps1`""
         New-ItemProperty -Path "HKLM:\OFFLINE_SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -Name "SetupAutopilot" -Value $RunCmd -Force | Out-Null
         
         [gc]::Collect()
         reg unload "HKLM\OFFLINE_SOFTWARE" | Out-Null
-        Write-Host "       [OK] Trigger Set." -ForegroundColor Green
+        Write-Host "       [OK] Registry Configured." -ForegroundColor Green
     }
 
     # Audit Mode Unattend
