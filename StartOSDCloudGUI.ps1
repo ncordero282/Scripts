@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     All-in-One OSDCloud Deployment Script
-    Handles GUI launch, driver injection, bloatware removal, and Audit Mode configuration.
+    Updates: Extended Bloatware List (Xbox/Teams/Outlook) & Fixed Startup Logic
 #>
 
 # --- CONFIGURATION ---
@@ -10,7 +10,6 @@ $AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/ref
 # ---------------------
 
 # 1. SELF-HEALING: Fix OSD Module & Drivers
-# This runs first to ensure the GUI and deployment don't fail.
 Write-Host ">>> verifying OSDCloud Modules..." -ForegroundColor Cyan
 if (Get-Module OSD) { Remove-Module OSD -Force -ErrorAction SilentlyContinue }
 Install-Module OSD -Force -AllowClobber -Scope CurrentUser
@@ -18,39 +17,52 @@ Import-Module OSD -Force
 
 # 2. LAUNCH THE GUI
 Write-Host ">>> Launching OSDCloud GUI..." -ForegroundColor Cyan
-Write-Warning "IMPORTANT: Do NOT check 'Restart' in the GUI. This script needs to finish first!"
+Write-Warning "IMPORTANT: Do NOT check 'Restart' in the GUI."
 Start-OSDCloudGUI
 
-# 3. POST-PROCESSING (Runs immediately after you close the GUI / Deployment finishes)
+# 3. POST-PROCESSING (Runs immediately after you close the GUI)
 $OSDisk = "C:\" 
 
-# We check if Windows was actually installed before running customizations
 if (Test-Path "$OSDisk\Windows\System32") {
     Write-Host ">>> OS Detected. Starting Customizations..." -ForegroundColor Green
 
-    # --- A. Wallpaper (Download to safe location) ---
+    # --- A. Wallpaper (Download Only) ---
+    # NOTE: The AutopilotScript must apply this via Registry!
     Write-Host "  > Downloading Wallpaper..." -ForegroundColor Cyan
     $WallPath = "$OSDisk\Windows\Web\Wallpaper\Windows\CompanyWallpaper.jpg"
     Invoke-WebRequest -Uri $WallpaperUrl -OutFile $WallPath -UseBasicParsing
 
-    # --- B. Remove Bloatware ---
+    # --- B. Remove Bloatware (UPDATED LIST) ---
     Write-Host "  > Removing Bloatware..." -ForegroundColor Cyan
+    # Added: Xbox, Teams, Outlook, ToDo based on your screenshots
     $Bloatware = @(
         "*BingWeather*","*GetHelp*","*GetStarted*","*Microsoft3DViewer*",
-        "*Solitaire*","*OfficeHub*","*MixedReality*","*OneNote*",
-        "*People*","*Skype*","*YourPhone*","*Zune*"
+        "*Solitaire*","*OfficeHub*",
+        "*People*","*Skype*","*YourPhone*","*Zune*",
+        "*Xbox*","*Outlook*","*Teams*"
     )
     foreach ($App in $Bloatware) {
+        Write-Host "    Removing: $App" -ForegroundColor DarkGray
         Get-AppxProvisionedPackage -Path $OSDisk | Where-Object {$_.DisplayName -like $App} | Remove-AppxProvisionedPackage -Path $OSDisk -ErrorAction SilentlyContinue
     }
 
     # --- C. Inject Autopilot Script (Startup Persistence) ---
+    # We use ProgramData so it runs for ANY user (including Audit Admin)
     Write-Host "  > Injecting Autopilot Script to Startup..." -ForegroundColor Cyan
     $StartupDir = "$OSDisk\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
     if (-not (Test-Path $StartupDir)) { New-Item -Path $StartupDir -ItemType Directory -Force }
+    
+    # Download the script directly to the startup folder
     Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile "$StartupDir\AutopilotScript.ps1" -UseBasicParsing
+    
+    # VERIFICATION: Check if file exists
+    if (Test-Path "$StartupDir\AutopilotScript.ps1") {
+        Write-Host "    [OK] Script injected successfully." -ForegroundColor Green
+    } else {
+        Write-Error "    [FAIL] Script download failed!"
+    }
 
-    # --- D. Force Audit Mode (Unattend.xml) ---
+    # --- D. Force Audit Mode ---
     Write-Host "  > Configuring Audit Mode..." -ForegroundColor Cyan
     $UnattendContent = @"
 <?xml version="1.0" encoding="utf-8"?>
@@ -66,7 +78,7 @@ if (Test-Path "$OSDisk\Windows\System32") {
 "@
     $UnattendContent | Out-File -FilePath "$OSDisk\Windows\Panther\unattend.xml" -Encoding UTF8 -Force
 
-    # --- E. FINAL REBOOT ---
+    # --- E. REBOOT ---
     Write-Host ">>> Imaging Complete! Rebooting in 5 seconds..." -ForegroundColor Green
     Start-Sleep -Seconds 5
     Restart-Computer -Force
