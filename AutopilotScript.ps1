@@ -20,8 +20,8 @@ function Request-DeviceCode {
         $global:Devicecode = $DevicecodeResponse
         Write-Host "From your managed device, " $DevicecodeResponse.message
 
-        # Open the device login URL
-        Start-Process "https://microsoft.com/devicelogin"
+        # Open Edge in InPrivate mode (Extra safety against Setup Screens)
+        Start-Process "msedge.exe" -ArgumentList "https://microsoft.com/devicelogin --inprivate"
 
         # Prompt the user to enter the code at the opened URL
         Write-Host "Please enter the code at the opened URL: $($DevicecodeResponse.user_code)"
