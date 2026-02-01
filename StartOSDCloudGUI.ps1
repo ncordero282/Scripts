@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    WinPE Boot Script for OSDCloud (Final Fix)
+    WinPE Boot Script for OSDCloud (High Speed Optimized)
 #>
 $LogFile = "X:\Windows\Temp\WinPE-StartOSDCloudGUI.log"
 Start-Transcript -Path $LogFile
@@ -10,13 +10,19 @@ Write-Host ">>> Initializing OSDCloud Environment..." -ForegroundColor Cyan
 # 1. Import OSD Module
 Import-Module OSD -Force -ErrorAction SilentlyContinue
 
-# 2. Launch OSDCloud GUI
-# IMPORTANT: You MUST UNCHECK "Reboot on Completion" in the GUI.
+# 2. Configure Settings for SPEED
+$Global:OSDCloud = @{
+    # DISABLE Updates here to save 45+ minutes. 
+    # Run updates later in Audit Mode if needed.
+    WindowsUpdate = $false 
+}
+
+# 3. Launch OSDCloud GUI
+# REMINDER: Uncheck "Reboot on Completion" in the GUI so the script can finish.
 Write-Host "Launching GUI..."
 Start-OSDCloudGUI
 
-# 3. POST-IMAGE INJECTION
-# This runs only after the GUI closes.
+# 4. POST-IMAGE INJECTION (Runs after GUI closes)
 Write-Host ">>> Starting Post-Imaging Injection..." -ForegroundColor Magenta
 
 $USBDrive = Get-Volume | Where-Object { $_.FileSystemLabel -eq "OSDCloudUSB" } | Select-Object -First 1
@@ -47,7 +53,7 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -File "C:\OSDCloud\Scripts\Set
     Write-Warning "CRITICAL: OSDCloudUSB drive not found!"
 }
 
-# 4. FINAL REBOOT (Handles the restart automatically)
+# 5. FINAL REBOOT
 Write-Host ">>> Injection Complete. Rebooting..." -ForegroundColor Cyan
 Stop-Transcript
 wpeutil reboot
