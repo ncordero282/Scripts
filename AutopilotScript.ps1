@@ -12,19 +12,7 @@ Write-Host " [Found]" -ForegroundColor Green
 # Add 10 seconds of pure padding just to be safe
 Write-Host "Stabilizing..." -ForegroundColor Yellow
 Start-Sleep -Seconds 10
-# ------------------------------------------
 
-# --- 2. APPLY WALLPAPER (Runtime Fix) ---
-# We use the file waiting in ProgramData
-$WallSource = "C:\ProgramData\Autopilot\NYCParksWallpaper.png"
-
-if (Test-Path $WallSource) {
-    Write-Host "Applying Wallpaper..." -ForegroundColor Cyan
-    Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name wallpaper -Value $WallSource -Force
-    rundll32.exe user32.dll, UpdatePerUserSystemParameters
-} else {
-    Write-Warning "Wallpaper file not found at $WallSource"
-}
 # ----------------------------------------
 
 # --- 3. AUTOPILOT LOGIC ---
