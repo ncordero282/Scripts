@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    WinPE Boot Script for OSDCloud (Hardened)
+    WinPE Boot Script for OSDCloud (Final Fix)
 #>
 $LogFile = "X:\Windows\Temp\WinPE-StartOSDCloudGUI.log"
 Start-Transcript -Path $LogFile
@@ -11,43 +11,43 @@ Write-Host ">>> Initializing OSDCloud Environment..." -ForegroundColor Cyan
 Import-Module OSD -Force -ErrorAction SilentlyContinue
 
 # 2. Launch OSDCloud GUI
-# We run this FIRST so the OS is laid down on the disk.
-# The script will pause here until the GUI finishes and you click "Start".
+# IMPORTANT: You MUST UNCHECK "Reboot on Completion" in the GUI.
 Write-Host "Launching GUI..."
 Start-OSDCloudGUI
 
-# 3. POST-IMAGE INJECTION (Run this AFTER the GUI closes/finishes)
-# This block runs after the OS is applied but BEFORE the reboot.
+# 3. POST-IMAGE INJECTION
+# This runs only after the GUI closes.
 Write-Host ">>> Starting Post-Imaging Injection..." -ForegroundColor Magenta
 
-# Detect the USB (Look for OSDCloudUSB label)
 $USBDrive = Get-Volume | Where-Object { $_.FileSystemLabel -eq "OSDCloudUSB" } | Select-Object -First 1
 
 if ($USBDrive) {
     $USBLetter = "$($USBDrive.DriveLetter):"
     $Source = "$USBLetter\OSDCloud\Scripts\SetupComplete"
     
-    # A) Stage payload to C:\OSDCloud
+    # A) Stage payload
     $Dest = "C:\OSDCloud\Scripts\SetupComplete"
     New-Item -Path $Dest -ItemType Directory -Force | Out-Null
     Copy-Item -Path "$Source\*" -Destination $Dest -Recurse -Force
-    Write-Host "   [+] Payload staged from USB." -ForegroundColor Green
+    Write-Host "   [+] Payload staged." -ForegroundColor Green
     
-    # B) FORCE the Windows Hook (The critical missing step)
+    # B) FORCE the Windows Hook
     $SetupDir = "C:\Windows\Setup\Scripts"
     New-Item -Path $SetupDir -ItemType Directory -Force | Out-Null
     
-    # Create the command file that Windows looks for
     $CmdContent = @"
 @echo off
-echo [SETUPCOMPLETE] Starting Custom Actions >> C:\Windows\Temp\SetupComplete.log
+echo [SETUPCOMPLETE] Starting >> C:\Windows\Temp\SetupComplete.log
 powershell.exe -ExecutionPolicy Bypass -NoProfile -File "C:\OSDCloud\Scripts\SetupComplete\SetupComplete-Actions.ps1" >> C:\Windows\Temp\SetupComplete.log 2>&1
 "@
     Set-Content -Path "$SetupDir\SetupComplete.cmd" -Value $CmdContent -Encoding ASCII
-    Write-Host "   [+] SetupComplete.cmd hook forcefully installed." -ForegroundColor Green
+    Write-Host "   [+] SetupComplete.cmd installed." -ForegroundColor Green
 
 } else {
-    Write-Warning "CRITICAL: OSDCloudUSB drive not found! Custom scripts will not run."
+    Write-Warning "CRITICAL: OSDCloudUSB drive not found!"
 }
 
+# 4. FINAL REBOOT (Handles the restart automatically)
+Write-Host ">>> Injection Complete. Rebooting..." -ForegroundColor Cyan
 Stop-Transcript
+wpeutil reboot
