@@ -1,106 +1,104 @@
-# --- 1. THE "HARD" DELAY (Fixes Timing) ---
-Write-Host "Setup initialized..." -ForegroundColor Yellow
-Write-Host "Waiting 60 seconds for Desktop to load..." -ForegroundColor Cyan
-Start-Sleep -Seconds 60
-# ------------------------------------------
+<#
+.SYNOPSIS
+    NYC Parks OSDCloud Wrapper (FINAL "NUCLEAR" EDITION)
+    - Fixes: Caching issues, Driver Errors, Timing Loops.
+    - Role: Downloads files and sets the trigger. Nothing else.
+#>
 
-# --- 2. APPLY WALLPAPER (Runtime Fix) ---
-$WallSource = "C:\ProgramData\Autopilot\NYCParksWallpaper.png"
-if (Test-Path $WallSource) {
-    Write-Host "Applying Wallpaper..." -ForegroundColor Cyan
-    Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name wallpaper -Value $WallSource -Force
-    rundll32.exe user32.dll, UpdatePerUserSystemParameters
+# --- CONFIGURATION ---
+$WallpaperUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/NYCParksWallpaper.png"
+$AutopilotScriptUrl = "https://raw.githubusercontent.com/ncordero282/Scripts/main/AutopilotScript.ps1"
+$LogFile = "X:\OSDCloud_Wrapper.log"
+Start-Transcript -Path $LogFile -Append
+
+# 1. LOAD MODULES
+Write-Host ">>> LOADING MODULES..." -ForegroundColor Cyan
+if (-not (Get-Module -ListAvailable OSDCloud)) { Install-Module OSDCloud -Force }
+Import-Module OSDCloud -Force
+Import-Module OSD -Force
+
+# 2. RUN GUI (MANUAL INTERVENTION REQUIRED)
+Clear-Host
+Write-Host "=======================================================" -ForegroundColor Yellow
+Write-Host "                 STOP AND READ" -ForegroundColor Red
+Write-Host "=======================================================" -ForegroundColor Yellow
+Write-Host "1. UNCHECK 'Reboot on Completion' (Bottom Left)." -ForegroundColor White
+Write-Host "2. UNCHECK 'Microsoft Update Catalog' (Drivers Tab)." -ForegroundColor White
+Write-Host "   (This prevents the Red 'Invoke-ParseDate' Errors)" -ForegroundColor Red
+Write-Host "3. Click START." -ForegroundColor White
+Write-Host "4. When finished, CLOSE THE GUI (Click X)." -ForegroundColor White
+Write-Host "=======================================================" -ForegroundColor Yellow
+Write-Host ">>> STARTING OSDCLOUD GUI..." -ForegroundColor Cyan
+
+Start-OSDCloudGUI
+
+# --- CHECKPOINT ---
+Write-Host "Waiting for GUI to close..." -ForegroundColor Yellow
+Pause
+
+# 3. FIND WINDOWS DRIVE
+Write-Host ">>> DETECTING WINDOWS PARTITION..." -ForegroundColor Cyan
+$OSVolume = Get-Volume | Where-Object { Test-Path "$($_.DriveLetter):\Windows\explorer.exe" } | Select-Object -First 1
+
+if (-not $OSVolume) {
+    Write-Host "CRITICAL: Windows Drive not found." -ForegroundColor Red
+    Start-Sleep 20
+    Exit
 }
-# ----------------------------------------
+$DriveLetter = "$($OSVolume.DriveLetter):"
+Write-Host "OS Found on [$DriveLetter]" -ForegroundColor Green
 
-# --- 3. AUTOPILOT LOGIC ---
-$global:clientId = "7ee59b78-92d6-45e0-a2d9-a530fecbd6d3"
-$global:authUrl = "https://login.microsoftonline.com/nyco365.onmicrosoft.com"
-$global:resource = "https://graph.microsoft.com/"
-$global:webhookurl = "https://80251b4f-5295-4911-a0d0-3e0e3692a407.webhook.eus2.azure-automation.net/webhooks?token=Z1srgtPU1t8r55KAysdUVYEESJ88TwPwuld4MqYtyjs%3d%22"
+# 4. DOWNLOAD ASSETS (Delivery Phase)
+Write-Host ">>> DELIVERING ASSETS..." -ForegroundColor Cyan
+$SafeDir = "$DriveLetter\ProgramData\Autopilot"
+if (-not (Test-Path $SafeDir)) { New-Item -Path $SafeDir -ItemType Directory -Force | Out-Null }
 
-$global:Devicecode = $null
-$global:Token = $null
+# Download Wallpaper (Save to Safe Dir)
+Invoke-WebRequest -Uri $WallpaperUrl -OutFile "$SafeDir\NYCParksWallpaper.png" -UseBasicParsing
 
-function Request-DeviceCode {
-    if ((New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -eq $false) {
-        Write-Host "Please run PowerShell in elevated mode"
-        return
-    }
+# Download Autopilot Script
+Invoke-WebRequest -Uri $AutopilotScriptUrl -OutFile "$SafeDir\AutopilotScript.ps1" -UseBasicParsing
 
-    $postParams = @{ resource = "$global:resource"; client_id = "$global:clientId" }
-    try {
-        $DevicecodeResponse = Invoke-RestMethod -Method POST -Uri "$global:authUrl/oauth2/devicecode" -Body $postParams
-        $global:Devicecode = $DevicecodeResponse
-        Write-Host "From your managed device, " $DevicecodeResponse.message
+Write-Host "    [OK] Files Delivered to C:\ProgramData\Autopilot" -ForegroundColor Green
 
-        # Open Edge in InPrivate mode
-        Start-Process "msedge.exe" -ArgumentList "https://microsoft.com/devicelogin --inprivate"
+# 5. INJECT RUNONCE (Trigger Phase)
+Write-Host ">>> SETTING TRIGGER..." -ForegroundColor Cyan
+$SoftwareHive = "$DriveLetter\Windows\System32\config\SOFTWARE"
 
-        # Prompt the user to enter the code at the opened URL
-        Write-Host "Please enter the code at the opened URL: $($DevicecodeResponse.user_code)"
-        Read-Host "Press Enter after you have entered the code to continue..."
-    } catch {
-        Write-Error "Failed to request device code. Check internet connection."
-    }
-}
-
-function Get-Token {
-    $tokenParams = @{ grant_type = "device_code"; resource = "$global:resource"; client_id = "$global:clientId"; code = "$($global:Devicecode.device_code)" }
-    try {
-        $tokenResponse = Invoke-RestMethod -Method POST -Uri "$global:authUrl/oauth2/token" -Body $tokenParams
-        $global:Token = $tokenResponse
-    } catch {
-        Write-Host "Failed to obtain token. Please check your network connection or credentials."
-        return
-    }
-}
-
-function SendTo-Autopilot {
-    Get-Token
-
-    if ($Global:Token -eq $null) {
-        Write-Host "You didn't authenticate to Azure AD, please start over."
-        return
-    }
-
-    if ((New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -eq $false) {
-        Write-Host "Please run PowerShell in elevated mode"
-        return
-    }
-
-    $DeviceHashData = (Get-WmiObject -Namespace "root/cimv2/mdm/dmmap" -Class "MDM_DevDetail_Ext01" -Filter "InstanceID='Ext' AND ParentID='./DevDetail'" -Verbose:$false).DeviceHardwareData
-    $SerialNumber = (Get-WmiObject -Class "Win32_BIOS" -Verbose:$false).SerialNumber
-    Write-Host "Device Serial Number: " $SerialNumber
-
-    $id_token = $global:Token.id_token
-    $token_type = $global:Token.token_type
-    $access_token = $global:Token.access_token
-    $body = @{ 
-        "SerialNumber" = "$SerialNumber"; 
-        "DeviceHashData" = "$DeviceHashData"; 
-        "token_type" = "$token_type"; 
-        "id_token" = "$id_token"; 
-        "access_token" = "$access_token"; 
-    }
-
-    $params = @{
-        ContentType = 'application/json'
-        Headers = @{ 'Date' = "$(Get-Date)"; }
-        Body = ($body | ConvertTo-Json)
-        Method = 'Post'
-        URI = $global:webhookurl
-    }
-
-    try {
-        Invoke-RestMethod @params
-        Start-Sleep -Seconds 3
-        Write-Host "Email will be sent in a few minutes to your email address." 
-    } catch {
-        Write-Host "Failed to send data to Autopilot. Please check your network connection or try again later."
-    }
+if (Test-Path $SoftwareHive) {
+    reg load "HKLM\OFFLINE_SOFTWARE" $SoftwareHive | Out-Null
+    
+    $RunOnceKey = "HKLM:\OFFLINE_SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"
+    
+    # We execute PowerShell using the FILE we just downloaded.
+    # The delay logic is inside THAT file, not here.
+    $Command = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Maximized -File `"C:\ProgramData\Autopilot\AutopilotScript.ps1`""
+    
+    New-ItemProperty -Path $RunOnceKey -Name "SetupAutopilot" -Value $Command -Force | Out-Null
+    
+    [gc]::Collect()
+    reg unload "HKLM\OFFLINE_SOFTWARE" | Out-Null
+    Write-Host "    [OK] Trigger Set." -ForegroundColor Green
 }
 
-# --- EXECUTION ---
-Request-DeviceCode
-SendTo-Autopilot
+# 6. UNATTEND XML (Audit Mode Phase)
+Write-Host ">>> CONFIGURING AUDIT MODE..." -ForegroundColor Cyan
+$UnattendContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+    <settings pass="oobeSystem">
+        <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <Reseal>
+                <Mode>Audit</Mode>
+            </Reseal>
+        </component>
+    </settings>
+</unattend>
+"@
+Set-Content -Path "$DriveLetter\Windows\Panther\unattend.xml" -Value $UnattendContent -Encoding UTF8
+
+# 7. FINISH
+Stop-Transcript
+Write-Host ">>> DONE. REBOOTING..." -ForegroundColor Green
+Start-Sleep -Seconds 5
+Restart-Computer -Force
