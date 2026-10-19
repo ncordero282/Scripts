@@ -1,0 +1,277 @@
+# Master Autopilot Device Login + Edge First-Run Bypass + Auto-Close on Login
+# PS 5.1 compatible, no modules required
+
+$ErrorActionPreference = "Stop"
+
+# ---- Configuration ----
+$global:clientId   = "7ee59b78-92d6-45e0-a2d9-a530fecbd6d3"
+$global:authUrl    = "https://login.microsoftonline.com/nyco365.onmicrosoft.com"
+$global:resource   = "https://graph.microsoft.com/"
+
+# UPDATED WEBHOOK URL
+$global:webhookurl = "https://80251b4f-5295-4911-a0d0-3e0e3692a407.webhook.eus2.azure-automation.net/webhooks?token=5j%2fr5ZMAMeRUkkFHI7Qpg%2b22tru%2f6Z%2f4Hb54CjlUflg%3d"
+
+$global:Devicecode = $null
+
+# ---- Logging ----
+$LogPath = "C:\Windows\Temp\Autopilot_DeviceLogin_Master.log"
+New-Item -ItemType Directory -Path (Split-Path $LogPath) -Force | Out-Null
+Start-Transcript -Path $LogPath -Append | Out-Null
+
+# ---------------------------
+# Helpers
+# ---------------------------
+function Test-IsAdmin {
+    try {
+        $p = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+        return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch { return $false }
+}
+
+function Set-RegDword {
+    param([string]$Path,[string]$Name,[int]$Value)
+    if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+    New-ItemProperty -Path $Path -Name $Name -PropertyType DWord -Value $Value -Force | Out-Null
+}
+
+function Set-RegStringList {
+    param([string]$Path,[string[]]$Values)
+    if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+    try {
+        (Get-Item -Path $Path).GetValueNames() | ForEach-Object {
+            Remove-ItemProperty -Path $Path -Name $_ -ErrorAction SilentlyContinue
+        }
+    } catch {}
+    $i = 1
+    foreach ($v in $Values) {
+        New-ItemProperty -Path $Path -Name "$i" -PropertyType String -Value $v -Force | Out-Null
+        $i++
+    }
+}
+
+function Get-EdgeExePath {
+    $candidates = @(
+        "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe",
+        "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+    )
+    foreach ($p in $candidates) { if (Test-Path $p) { return $p } }
+    return $null
+}
+
+function Initialize-EdgeForMicrosoftLogin {
+    $policyRoot = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
+    Set-RegDword -Path $policyRoot -Name "HideFirstRunExperience"     -Value 1
+    Set-RegDword -Path $policyRoot -Name "PromotionalTabsEnabled"     -Value 0
+    Set-RegDword -Path $policyRoot -Name "ShowRecommendationsEnabled" -Value 0
+    Set-RegDword -Path $policyRoot -Name "BlockThirdPartyCookies"     -Value 0
+    $allowed = @(
+        "https://microsoft.com","https://*.microsoft.com",
+        "https://microsoft.com/devicelogin","https://login.microsoftonline.com",
+        "https://*.login.microsoftonline.com","https://*.microsoftonline.com",
+        "https://device.login.microsoftonline.com","https://*.msauth.net","https://*.msftauth.net"
+    )
+    Set-RegStringList -Path (Join-Path $policyRoot "PopupsAllowedForUrls")  -Values $allowed
+    Set-RegStringList -Path (Join-Path $policyRoot "CookiesAllowedForUrls") -Values $allowed
+}
+
+function Start-EdgeDeviceLogin {
+    param([string]$Url = "https://microsoft.com/devicelogin")
+    Initialize-EdgeForMicrosoftLogin
+    Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    $edgeExe = Get-EdgeExePath
+    if (-not $edgeExe) { Start-Process $Url | Out-Null; return }
+    $args = @("--no-first-run","--no-default-browser-check","--disable-features=msEdgeFirstRunExperience",$Url)
+    Start-Process -FilePath $edgeExe -ArgumentList $args | Out-Null
+}
+
+function Show-DeviceCodeWindow {
+    param(
+        [Parameter(Mandatory)][string]$Code,
+        [Parameter(Mandatory)][string]$Url
+    )
+
+    try { Set-Clipboard -Value $Code } catch {}
+    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase | Out-Null
+
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        Title="Microsoft Device Login"
+        Height="450" Width="760"
+        WindowStartupLocation="CenterScreen"
+        Topmost="False" 
+        ResizeMode="CanResize">
+  <Grid Margin="22" Background="White">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <TextBlock Grid.Row="0" Text="Enter this code in the browser:" FontSize="26" FontWeight="SemiBold" Margin="0,0,0,14"/>
+
+    <Border Grid.Row="1" CornerRadius="16" BorderThickness="2" Padding="18" BorderBrush="#CCCCCC">
+      <StackPanel>
+        <TextBlock Text="$Code" FontSize="60" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,12,0,18"/>
+        <TextBlock Text="Code auto-typed. If not, paste (Ctrl+V)."
+                   FontSize="18" FontWeight="SemiBold" TextAlignment="Center" Margin="0,0,0,6" Foreground="Green"/>
+        <TextBlock Text="This window will close automatically once you complete the sign-in."
+                   FontSize="16" TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,14" Foreground="#555555"/>
+        <TextBlock Text="URL: $Url" FontSize="14" Foreground="Gray" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+
+    <TextBlock Grid.Row="2" Text="You can move this window." FontSize="14" Margin="0,14,0,0" TextAlignment="Center" Foreground="Gray"/>
+  </Grid>
+</Window>
+"@
+    $reader = New-Object System.Xml.XmlNodeReader ([xml]$xaml)
+    $window = [Windows.Markup.XamlReader]::Load($reader)
+    
+    # Allow dragging
+    $window.Add_MouseLeftButtonDown({ try { $this.DragMove() } catch {} })
+    
+    $null = $window.Show()
+    return $window
+}
+
+function Get-AadErrorCodeFromException {
+    param([System.Exception]$Exception)
+    $msg = $null
+    try { $msg = $_.ErrorDetails.Message } catch {}
+    if (-not $msg) { $msg = $Exception.Message }
+    if ($msg -match "authorization_pending") { return "authorization_pending" }
+    if ($msg -match "slow_down")             { return "slow_down" }
+    if ($msg -match "expired_token")         { return "expired_token" }
+    try { $j = $msg | ConvertFrom-Json -ErrorAction Stop; if ($j.error) { return [string]$j.error } } catch {}
+    return $null
+}
+
+# ---------------------------
+# Logic
+# ---------------------------
+
+function Request-DeviceCode {
+    if (-not (Test-IsAdmin)) { Write-Host "Please run PowerShell in elevated mode"; return }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+    $postParams = @{ resource = "$global:resource"; client_id = "$global:clientId" }
+    $DevicecodeResponse = Invoke-RestMethod -Method POST -Uri "$global:authUrl/oauth2/devicecode" -Body $postParams
+    $global:Devicecode = $DevicecodeResponse
+
+    $loginUrl = "https://microsoft.com/devicelogin"
+    if ($DevicecodeResponse.verification_url) { $loginUrl = $DevicecodeResponse.verification_url }
+
+    Write-Host "Code: $($DevicecodeResponse.user_code)"
+    Write-Host "URL: $loginUrl"
+
+    # Launch Edge
+    Start-EdgeDeviceLogin -Url $loginUrl
+
+    # Auto-type logic
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        Write-Host "Waiting for browser..."
+        Start-Sleep -Seconds 4
+        Write-Host "Typing code..."
+        [System.Windows.Forms.SendKeys]::SendWait($DevicecodeResponse.user_code)
+    } catch { Write-Host "Auto-type failed." }
+
+    # Show Window
+    return Show-DeviceCodeWindow -Code $DevicecodeResponse.user_code -Url $loginUrl
+}
+
+function WaitFor-Token {
+    if (-not $global:Devicecode) { throw "Device code not requested." }
+    $expiresIn = 900
+    $interval  = 5
+    try {
+        if ($global:Devicecode.expires_in) { $expiresIn = [int]$global:Devicecode.expires_in }
+        if ($global:Devicecode.interval)   { $interval  = [int]$global:Devicecode.interval }
+    } catch {}
+
+    $deadline = (Get-Date).AddSeconds($expiresIn)
+    $tokenParams = @{
+        grant_type = "device_code"
+        resource   = "$global:resource"
+        client_id  = "$global:clientId"
+        code       = "$($global:Devicecode.device_code)"
+    }
+
+    Write-Host "Waiting for user to complete sign-in..." -NoNewline
+
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $tokenResponse = Invoke-RestMethod -Method POST -Uri "$global:authUrl/oauth2/token" -Body $tokenParams
+            Write-Host " Success!" -ForegroundColor Green
+            return $tokenResponse
+        }
+        catch {
+            $err = Get-AadErrorCodeFromException -Exception $_.Exception
+            if ($err -eq "authorization_pending") {
+                Write-Host "." -NoNewline
+                Start-Sleep -Seconds $interval
+                continue
+            }
+            if ($err -eq "slow_down") {
+                Start-Sleep -Seconds ($interval + 5)
+                continue
+            }
+            throw "Error: $err"
+        }
+    }
+    throw "Timeout."
+}
+
+function Upload-AutopilotData {
+    param([Parameter(Mandatory)]$Token)
+
+    if (-not (Test-IsAdmin)) { Write-Host "Need Admin rights."; return }
+
+    Write-Host "Gathering Hardware Hash (this takes a moment)..."
+    $DeviceHashData = (Get-WmiObject -Namespace "root/cimv2/mdm/dmmap" -Class "MDM_DevDetail_Ext01" -Filter "InstanceID='Ext' AND ParentID='./DevDetail'" -Verbose:$false).DeviceHardwareData
+    $SerialNumber   = (Get-WmiObject -Class "Win32_BIOS" -Verbose:$false).SerialNumber
+
+    Write-Host "Serial: $SerialNumber"
+
+    $body = @{
+        "SerialNumber"   = "$SerialNumber"
+        "DeviceHashData" = "$DeviceHashData"
+        "token_type"     = "$($Token.token_type)"
+        "id_token"       = "$($Token.id_token)"
+        "access_token"   = "$($Token.access_token)"
+    }
+
+    $params = @{
+        ContentType = "application/json"
+        Headers     = @{ "Date" = "$(Get-Date)" }
+        Body        = ($body | ConvertTo-Json)
+        Method      = "Post"
+        URI         = $global:webhookurl
+    }
+
+    Invoke-RestMethod @params
+    Write-Host "Upload Complete. Check your email." -ForegroundColor Cyan
+}
+
+# ---------------------------
+# Execution Flow
+# ---------------------------
+try {
+    # 1. Start the visual flow
+    $ui = Request-DeviceCode
+    
+    # 2. Block script here until user finishes login in browser
+    $token = WaitFor-Token
+    
+    # 3. IMMEDIATELY close the window once token is grabbed
+    try { if ($ui -and $ui.IsVisible) { $ui.Close() } } catch {}
+
+    # 4. Upload data
+    Upload-AutopilotData -Token $token
+}
+catch {
+    Write-Error $_
+}
+finally {
+    Stop-Transcript | Out-Null
+}
